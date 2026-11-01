@@ -24,18 +24,6 @@ ament_target_dependencies(drive_node
   geometry_msgs
 )
 
-add_executable(stepper_driver_node src/stepper_driver_node.cpp)
-ament_target_dependencies(stepper_driver_node
-  rclcpp
-  std_msgs
-)
-
-add_executable(vesc_driver_node src/vesc_driver_node.cpp)
-ament_target_dependencies(vesc_driver_node
-  rclcpp
-  std_msgs
-)
-
 add_executable(vesc_can_driver_node src/vesc_can_driver_node.cpp)
 ament_target_dependencies(vesc_can_driver_node
   rclcpp
@@ -44,24 +32,9 @@ ament_target_dependencies(vesc_can_driver_node
 
 install(TARGETS
   drive_node
-  stepper_driver_node
-  vesc_driver_node
   vesc_can_driver_node
   DESTINATION lib/${PROJECT_NAME}
 )
-
-#Shouldn't need the stuff commented out anymore.
-
-# Python visualizer thingy
-##install(PROGRAMS
-#  scripts/input_viewer.py
-#DESTINATION lib/${PROJECT_NAME}
-#)
-
-# Install the ps5 png to use for background
-##install(DIRECTORY resource/
-#  DESTINATION share/${PROJECT_NAME}/resource
-#)
 
 # -----------------------------
 # Linting
