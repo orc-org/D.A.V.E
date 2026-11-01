@@ -1,8 +1,7 @@
 <?xml version="1.0"?>
 <robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="dave_rover">
 
-
-  <!-- configuration and external parameters                     -->
+  <!-- configuration and external parameters -->
   <xacro:property name="config_path" value="$(find rover_description)/config/physical_params.yaml" />
   <xacro:property name="params" value="${xacro.load_yaml(config_path)['robot_dimensions']}" />
 
@@ -27,13 +26,11 @@
   <xacro:property name="a_len" value="${params['arm_length']}" />
   <xacro:property name="t_len" value="${params['tool_tip_length']}" />
 
-  <!-- inertial macros and Gazebo control plugins -->
+  <!-- inertial macros and gazebo control plugins -->
   <xacro:include filename="inertial_macros.xacro" />
   <xacro:include filename="gazebo_control.xacro" />
 
-
-  <!-- RViz materials                                           -->
-
+  <!-- rviz materials -->
   <material name="chassis_orange"><color rgba="0.95 0.45 0.05 1.0"/></material>
   <material name="tire_black"><color rgba="0.1 0.1 0.1 1.0"/></material>
   <material name="rim_grey"><color rgba="0.4 0.4 0.4 1.0"/></material>
@@ -42,9 +39,7 @@
   <material name="green"><color rgba="0.1 0.8 0.1 1.0"/></material>
   <material name="black"><color rgba="0.05 0.05 0.05 1.0"/></material>
 
-
-  <!-- base footprint (ground plane proejction)                 -->
-
+  <!-- base footprint (ground plane projection) -->
   <link name="base_footprint"/>
 
   <joint name="base_footprint_joint" type="fixed">
@@ -54,9 +49,7 @@
     <origin xyz="0 0 ${wheel_r}" rpy="0 0 0"/>
   </joint>
 
-  <!-- ======================================================== -->
-  <!-- base chassis (driving box)                               -->
-  <!-- ======================================================== -->
+  <!-- base chassis (driving box) -->
   <link name="base_link">
     <!-- visual representation -->
     <visual>
@@ -81,9 +74,7 @@
     </xacro:inertial_box>
   </link>
 
-
   <!-- 4-wheel macro definition -->
-
   <xacro:macro name="wheel" params="prefix x_offset y_offset">
     <joint name="${prefix}_wheel_joint" type="continuous">
       <parent link="base_link"/>
@@ -93,7 +84,7 @@
     </joint>
 
     <link name="${prefix}_wheel_link">
-      <!-- visual wheel (cylinder aligned along Y axis) -->
+      <!-- visual wheel (cylinder aligned along y axis) -->
       <visual>
         <origin xyz="0 0 0" rpy="${pi/2.0} 0 0"/>
         <geometry>
@@ -117,15 +108,13 @@
     </link>
   </xacro:macro>
 
-  <!-- Wheel Instantiations -->
+  <!-- wheel instantiations -->
   <xacro:wheel prefix="front_left"  x_offset="${wheel_x_off}"  y_offset="${wheel_y_off}" />
   <xacro:wheel prefix="front_right" x_offset="${wheel_x_off}"  y_offset="-${wheel_y_off}" />
   <xacro:wheel prefix="rear_left"   x_offset="-${wheel_x_off}" y_offset="${wheel_y_off}" />
   <xacro:wheel prefix="rear_right"  x_offset="-${wheel_x_off}" y_offset="-${wheel_y_off}" />
 
-
-  <!-- robotic arm/manipulator            -->
-
+  <!-- robotic arm and manipulator (modular component) -->
   <!-- to attach the robotic arm, simply uncomment the line below: -->
   <!-- <xacro:include filename="rover_arm.xacro" /> -->
 

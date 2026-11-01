@@ -1,9 +1,7 @@
 <?xml version="1.0"?>
 <robot xmlns:xacro="http://www.ros.org/wiki/xacro">
 
-  <!-- ======================================================== -->
-  <!-- intertial calculation macros (standard SI: kg, meters)    -->
-  <!-- ======================================================== -->
+  <!-- inertial calculation macros (kg, meters) -->
 
   <!-- box inertia -->
   <xacro:macro name="inertial_box" params="mass x y z *origin">
@@ -16,7 +14,7 @@
     </inertial>
   </xacro:macro>
 
-  <!-- cylinder inertia (Z-axis revolving cylinder) -->
+  <!-- cylinder inertia (z-axis revolving cylinder) -->
   <xacro:macro name="inertial_cylinder" params="mass length radius *origin">
     <inertial>
       <xacro:insert_block name="origin"/>
@@ -27,7 +25,7 @@
     </inertial>
   </xacro:macro>
 
-  <!-- wheel inertia (Y-axis revolving cylinder) -->
+  <!-- wheel inertia (y-axis revolving cylinder) -->
   <xacro:macro name="inertial_wheel_y" params="mass length radius *origin">
     <inertial>
       <xacro:insert_block name="origin"/>

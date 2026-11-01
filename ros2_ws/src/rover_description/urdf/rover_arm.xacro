@@ -1,7 +1,7 @@
 <?xml version="1.0"?>
 <robot xmlns:xacro="http://www.ros.org/wiki/xacro">
 
-  <!-- robotic arm modular component  -->
+  <!-- robotic arm and end effector (modular component) -->
 
   <joint name="stand_column_joint" type="fixed">
     <parent link="base_link"/>
@@ -104,7 +104,7 @@
     </xacro:inertial_sphere>
   </link>
 
-  <!-- Gripper Fingers -->
+  <!-- gripper fingers -->
   <joint name="left_finger_joint" type="prismatic">
     <parent link="tool_link"/>
     <child link="left_finger_link"/>

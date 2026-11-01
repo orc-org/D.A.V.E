@@ -1,4 +1,4 @@
-# D.A.V.E. Physical Dimensions (Standard SI: meters & kilograms)
+# robot physical dimensions (meters and kilograms)
 robot_dimensions:
   # chassis body
   chassis_length: 0.70
@@ -10,11 +10,11 @@ robot_dimensions:
   wheel_radius: 0.15
   wheel_width: 0.08
   wheel_mass: 1.5
-  wheel_x_offset: 0.25   # distance from center to front/rear axles
-  wheel_y_offset: 0.30   # distance from center to left/right wheels (separation = 0.60m)
-  wheel_z_offset: 0.00   # offset of wheel axis relative to base_link
+  wheel_x_offset: 0.25
+  wheel_y_offset: 0.30
+  wheel_z_offset: 0.00
 
-  # robotic arm (preserved for rover_arm.xacro and motion_coordinator)
+  # robotic arm and manipulator (preserved for rover_arm.xacro and motion_coordinator)
   column_base_offset: 0.10
   column_height: 0.40
   mount_length: 0.30

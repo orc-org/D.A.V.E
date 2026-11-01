@@ -11,33 +11,33 @@ from launch_ros.actions import Node
 
 def generate_launch_description():
     pkg_rover_description = get_package_share_directory('rover_description')
-    pkg_gazebo_ros = get_package_share_directory('gazebo_ros')
+    pkg_ros_gz_sim = get_package_share_directory('ros_gz_sim')
 
     # launch configurations
     use_rviz = LaunchConfiguration('use_rviz')
     use_drive_node = LaunchConfiguration('use_drive_node')
-    world = LaunchConfiguration('world')
     use_sim_time = LaunchConfiguration('use_sim_time')
+    world = LaunchConfiguration('world')
 
-    # default world path
-    default_world_path = os.path.join(pkg_rover_description, 'worlds', 'empty.world')
+    # default world path (sdf for modern gazebo)
+    default_world_path = os.path.join(pkg_rover_description, 'worlds', 'empty.sdf')
 
-    # path to xacro file and processing
+    # path to xacro file and processing into urdf string
     xacro_path = os.path.join(pkg_rover_description, 'urdf', 'rover.urdf.xacro')
     robot_description_raw = xacro.process_file(xacro_path).toxml()
 
-    # path to RViz config
+    # path to rviz config
     rviz_config_path = os.path.join(pkg_rover_description, 'rviz', 'default.rviz')
 
-    # 1. start gazebo server & client
-    gazebo = IncludeLaunchDescription(
+    # start modern gazebo (gz_sim) with the world unpaused (-r)
+    gz_sim = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
-            os.path.join(pkg_gazebo_ros, 'launch', 'gazebo.launch.py')
+            os.path.join(pkg_ros_gz_sim, 'launch', 'gz_sim.launch.py')
         ),
-        launch_arguments={'world': world}.items()
+        launch_arguments={'gz_args': ['-r ', world]}.items()
     )
 
-    # 2. publish robot state / TF transforms
+    # publish robot state and tf
     robot_state_publisher = Node(
         package='robot_state_publisher',
         executable='robot_state_publisher',
@@ -49,19 +49,37 @@ def generate_launch_description():
         }]
     )
 
-    # 3. spawn D.A.V.E in Gazebo
+    # spawn entity in modern gazebo
     spawn_entity = Node(
-        package='gazebo_ros',
-        executable='spawn_entity.py',
+        package='ros_gz_sim',
+        executable='create',
         arguments=[
             '-topic', 'robot_description',
-            '-entity', 'dave_rover',
-            '-z', '0.25'  # spawn slightly above ground to prevent clipping
+            '-name', 'dave_rover',
+            '-z', '0.25'
         ],
         output='screen'
     )
 
-    # 4. RViz visualization
+    # modern gazebo to ros 2 communication bridge
+    # maps gazebo transport messages to standard ros 2 message types
+    ros_gz_bridge = Node(
+        package='ros_gz_bridge',
+        executable='parameter_bridge',
+        arguments=[
+            # ros to gazebo: velocity commands
+            '/cmd_vel_sim@geometry_msgs/msg/Twist]ignition.msgs.Twist',
+            # gazebo to ros: odometry, clock, transforms, joint states
+            '/odom@nav_msgs/msg/Odometry[ignition.msgs.Odometry',
+            '/clock@rosgraph_msgs/msg/Clock[ignition.msgs.Clock',
+            '/tf@tf2_msgs/msg/TFMessage[ignition.msgs.Pose_V',
+            '/joint_states@sensor_msgs/msg/JointState[ignition.msgs.Model'
+        ],
+        output='screen',
+        parameters=[{'use_sim_time': use_sim_time}]
+    )
+
+    # rviz2 visualization
     rviz_node = Node(
         package='rviz2',
         executable='rviz2',
@@ -71,7 +89,7 @@ def generate_launch_description():
         condition=IfCondition(use_rviz)
     )
 
-    # 5. D.A.V.E. drive node (from drive_package)
+    # drive node (from drive_package)
     drive_node = Node(
         package='drive_package',
         executable='drive_node',
@@ -81,7 +99,7 @@ def generate_launch_description():
         condition=IfCondition(use_drive_node)
     )
 
-    # 6. simulation drive bridge (bridges /motor/* -> /cmd_vel_sim)
+    # simulation drive bridge (bridges /motor/* to /cmd_vel_sim)
     sim_drive_bridge = Node(
         package='rover_description',
         executable='sim_drive_bridge.py',
@@ -110,12 +128,13 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'world',
             default_value=default_world_path,
-            description='Path to Gazebo world file'
+            description='Path to Modern Gazebo SDF world file'
         ),
 
-        gazebo,
+        gz_sim,
         robot_state_publisher,
         spawn_entity,
+        ros_gz_bridge,
         rviz_node,
         drive_node,
         sim_drive_bridge
