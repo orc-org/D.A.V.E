@@ -54,7 +54,7 @@ def generate_launch_description():
         package='ros_gz_sim',
         executable='create',
         arguments=[
-            '-topic', 'robot_description',
+            '-string', robot_description_raw,
             '-name', 'dave_rover',
             '-z', '0.25'
         ],
@@ -75,8 +75,7 @@ def generate_launch_description():
             '/tf@tf2_msgs/msg/TFMessage[ignition.msgs.Pose_V',
             '/joint_states@sensor_msgs/msg/JointState[ignition.msgs.Model'
         ],
-        output='screen',
-        parameters=[{'use_sim_time': use_sim_time}]
+        output='screen'
     )
 
     # rviz2 visualization

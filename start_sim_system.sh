@@ -3,17 +3,24 @@
 
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
 
+# Ensure FastDDS uses standard multicast/localhost discovery so all 8+ sim nodes discover each other
+unset FASTRTPS_DEFAULT_PROFILES_FILE
+
 echo "cleaning up old simulation and dashboard processes..."
+pkill -f "python3.*dashboard_helper" 2>/dev/null
 pkill -f "ros2.*sim.launch.py" 2>/dev/null
 pkill -f "ign gazebo" 2>/dev/null
 pkill -f "gz sim" 2>/dev/null
 pkill -f "ruby.*gz" 2>/dev/null
 pkill -f "parameter_bridge" 2>/dev/null
+pkill -f "robot_state_publisher" 2>/dev/null
 pkill -f "rviz2" 2>/dev/null
 pkill -f "rosbridge_websocket" 2>/dev/null
 pkill -f "python.*http.server" 2>/dev/null
 pkill -f "sim_drive_bridge" 2>/dev/null
 pkill -f "drive_node" 2>/dev/null
+pkill -f "motion_coordinator" 2>/dev/null
+pkill -f "vesc_can_driver_node" 2>/dev/null
 sleep 1
 
 echo "starting d.a.v.e. modern gazebo and dashboard system..."
@@ -39,6 +46,11 @@ ros2 launch rosbridge_server rosbridge_websocket_launch.xml port:=9090 > /tmp/ro
 ROSBRIDGE_PID=$!
 sleep 1
 
+# start dashboard helper node (process manager backend)
+echo "starting dashboard helper node..."
+ros2 run arm_controller dashboard_helper > /tmp/dashboard_helper.log 2>&1 &
+HELPER_PID=$!
+
 # start dashboard web server on port 8000
 echo "starting dashboard web server on port 8000..."
 python3 -m http.server 8000 --directory "$SCRIPT_DIR/dashboard" > /tmp/webserver_sim.log 2>&1 &
@@ -57,16 +69,21 @@ echo "press ctrl+c to stop"
 cleanup() {
     echo "shutting down..."
     kill $WEB_PID 2>/dev/null
+    kill $HELPER_PID 2>/dev/null
     kill $ROSBRIDGE_PID 2>/dev/null
     kill $SIM_PID 2>/dev/null
     pkill -f "ign gazebo" 2>/dev/null
     pkill -f "gz sim" 2>/dev/null
     pkill -f "ruby.*gz" 2>/dev/null
     pkill -f "parameter_bridge" 2>/dev/null
+    pkill -f "robot_state_publisher" 2>/dev/null
     pkill -f "rviz2" 2>/dev/null
     pkill -f "sim_drive_bridge" 2>/dev/null
     pkill -f "drive_node" 2>/dev/null
+    pkill -f "motion_coordinator" 2>/dev/null
+    pkill -f "vesc_can_driver_node" 2>/dev/null
     pkill -f "rosbridge_websocket" 2>/dev/null
+    pkill -f "python3.*dashboard_helper" 2>/dev/null
     exit 0
 }
 

@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """
 simulation drive bridge node for d.a.v.e.
-subscribes to /motor/* topics from drive_node and publishes /cmd_vel_sim to modern gazebo
+bridges drive commands to modern gazebo (gz_sim / ign_gazebo) skid-steer controller
+supports direct /cmd_vel forwarding as well as /motor/* skid-steer reconstruction
 """
 
+import time
 import rclpy
 from rclpy.node import Node
 from std_msgs.msg import Float32
@@ -29,48 +31,80 @@ class SimDriveBridge(Node):
         self.rl = 0.0
         self.rr = 0.0
 
+        # wall-clock monotonic timestamps for robust timing
+        self.last_motor_time = 0.0
+        self.last_cmd_vel_time = 0.0
+        self.stopped = True
+
         # subscriptions to drive_node output topics
         self.sub_fl = self.create_subscription(Float32, '/motor/front_left', self.cb_fl, 10)
         self.sub_fr = self.create_subscription(Float32, '/motor/front_right', self.cb_fr, 10)
         self.sub_rl = self.create_subscription(Float32, '/motor/rear_left', self.cb_rl, 10)
         self.sub_rr = self.create_subscription(Float32, '/motor/rear_right', self.cb_rr, 10)
 
+        # direct /cmd_vel subscription
+        self.sub_cmd_vel = self.create_subscription(Twist, '/cmd_vel', self.cb_cmd_vel, 10)
+
         # publisher to gazebo skid-steer controller
         self.pub_twist = self.create_publisher(Twist, '/cmd_vel_sim', 10)
 
-        # timer loop for continuous smooth command streaming to gazebo
+        # continuous stream timer for smooth simulation dynamics
         self.timer = self.create_timer(1.0 / rate_hz, self.update_and_publish)
 
-        self.get_logger().info('sim_drive_bridge node ready')
+        self.get_logger().info('sim_drive_bridge node ready (wall-clock monotonic timer active)')
 
     def cb_fl(self, msg: Float32):
-        self.fl = msg.data
+        self.fl = float(msg.data)
+        self.last_motor_time = time.monotonic()
 
     def cb_fr(self, msg: Float32):
-        self.fr = msg.data
+        self.fr = float(msg.data)
+        self.last_motor_time = time.monotonic()
 
     def cb_rl(self, msg: Float32):
-        self.rl = msg.data
+        self.rl = float(msg.data)
+        self.last_motor_time = time.monotonic()
 
     def cb_rr(self, msg: Float32):
-        self.rr = msg.data
+        self.rr = float(msg.data)
+        self.last_motor_time = time.monotonic()
+
+    def cb_cmd_vel(self, msg: Twist):
+        self.last_cmd_vel_time = time.monotonic()
+        # Direct forwarding: scale linear and angular by max speed limits
+        twist = Twist()
+        twist.linear.x = float(msg.linear.x * self.max_lin)
+        twist.angular.z = float(msg.angular.z * self.max_ang)
+        self.pub_twist.publish(twist)
+        self.stopped = False
 
     def update_and_publish(self):
-        # average left and right sides
-        left = (self.fl + self.rl) * 0.5
-        right = (self.fr + self.rr) * 0.5
+        now = time.monotonic()
 
-        # in drive_node skid-steer mixing:
-        # left = throttle - steering
-        # right = throttle + steering
-        throttle = (left + right) * 0.5
-        steering = (right - left) * 0.5
+        # If direct /cmd_vel was received within last 300ms, let cb_cmd_vel control motion
+        if (now - self.last_cmd_vel_time) < 0.3:
+            return
 
-        twist = Twist()
-        twist.linear.x = float(throttle * self.max_lin)
-        twist.angular.z = float(steering * self.max_ang)
+        # Otherwise, check if /motor/* topics from drive_node (e.g. /joy) are active
+        if (now - self.last_motor_time) < 0.5:
+            # skid-steer unmixing from 4 motor values
+            left = (self.fl + self.rl) * 0.5
+            right = (self.fr + self.rr) * 0.5
 
-        self.pub_twist.publish(twist)
+            throttle = (left + right) * 0.5
+            steering = (right - left) * 0.5
+
+            twist = Twist()
+            twist.linear.x = float(throttle * self.max_lin)
+            twist.angular.z = float(steering * self.max_ang)
+
+            self.pub_twist.publish(twist)
+            self.stopped = False
+        elif not self.stopped:
+            # Publish stop once when all inputs become inactive
+            stop_twist = Twist()
+            self.pub_twist.publish(stop_twist)
+            self.stopped = True
 
 
 def main(args=None):
