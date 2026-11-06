@@ -52,11 +52,28 @@ Waypoint::Waypoint(double coordinateA, double coordinateB, double coordinateC, b
 // Conversion Methods
 
 void Waypoint::geodetic_To_EarthCentred() {
-    double N = a / sqrt(1.0 - e2 * sin(latitude) * sin(latitude));
+    double latitudeRadians = latitude * pi / 180.0;
+    double longitudeRadians = longitude * pi / 180.0;
 
-    ECEF_x = (N + altitude) * cos(latitude) * cos(longitude);
-    ECEF_y = (N + altitude) * cos(latitude) * sin(longitude);
-    ECEF_z = (N * (1.0 - e2) + altitude) * sin(latitude);
+    double N = a / std::sqrt(
+        1.0 - e2 *
+        std::sin(latitudeRadians) *
+        std::sin(latitudeRadians)
+    );
+
+    ECEF_x =
+        (N + altitude) *
+        std::cos(latitudeRadians) *
+        std::cos(longitudeRadians);
+
+    ECEF_y =
+        (N + altitude) *
+        std::cos(latitudeRadians) *
+        std::sin(longitudeRadians);
+
+    ECEF_z =
+        (N * (1.0 - e2) + altitude) *
+        std::sin(latitudeRadians);
 }
 
 void Waypoint::EarthCentred_To_Local() {
@@ -65,7 +82,7 @@ void Waypoint::EarthCentred_To_Local() {
     double dZ = ECEF_z - home_ECEF_z;
     
     x = -sin(home_longitude) * dX 
-        +cos(home_latitude) * dY;
+        +cos(home_longitude) * dY;
 
     y = -sin(home_latitude) * cos(home_longitude) * dX 
         -sin(home_latitude) * sin(home_longitude) * dY 
@@ -124,8 +141,9 @@ void Waypoint::EarthCentred_To_GeodeticApprox() {
         latRad = atan2(ECEF_z, p * (1.0 - e2 * N / denom));
     }
 
-    latitude = latRad;
-    longitude = lonRad;
+    latitude = latRad * 180.0 / pi;
+    longitude = lonRad * 180.0 / pi;
+    altitude = h;
 }
 
 std::array<double,2> Waypoint::local_To_GeodeticApprox(int x, int y){

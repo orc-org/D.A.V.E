@@ -1,4 +1,5 @@
 #include "NAVnode.hpp"
+#include <algorithm>
 
 using std::placeholders::_1;
 using std::placeholders::_2;
@@ -22,18 +23,21 @@ public:
 //DummyGPS* GNSS = new DummyGPS();
 
 void NAVnode::checkWaypointCollisions(){
-    std::sort(obstacles, obstacles + obstacleCount); 
     ListNode* current = routes[routeToEdit].getHead();
     while (current != nullptr) {
-        for (int i = 0; i < obstacleCount; i++) {
-            double dx = current->point->getX() - obstacles[i]->getX();
-            double dy = current->point->getY() - obstacles[i]->getY();
-            if (sqrt(dx*dx + dy*dy) < obstacles[i]->getRadius()) {
-                waypointCollisionDetected(current, obstacles[i]);
-                break; // No need to check other obstacles if a collision is detected
-            }
+    ListNode* next = current->next;
+
+    for (int i = 0; i < obstacleCount; i++) {
+        double dx = current->point->getX() - obstacles[i]->getX();
+        double dy = current->point->getY() - obstacles[i]->getY();
+
+        if (std::sqrt(dx * dx + dy * dy) < obstacles[i]->getRadius()) {
+            waypointCollisionDetected(current, obstacles[i]);
+            break;
         }
-        current = current->next;
+    }
+
+        current = next;
     }
 }
 
@@ -72,7 +76,11 @@ void NAVnode::checkTrackCollisions(){
     current = current->next;
     while (current != nullptr) {
         for (int i = 0; i < obstacleCount; i++) {
-            auto pointOfInterest = calculatePointOfInterest(current->previous, current, obstacles[i]);
+            auto pointOfInterest = calculatePointOfInterest(
+                current->previous,
+                current,
+                obstacles[i]
+            );
             double dx = obstacles[i]->getX() - pointOfInterest[0]; 
             double dy = obstacles[i]->getY() - pointOfInterest[1];
             double distanceToCenter = sqrt(dx * dx + dy * dy);
@@ -152,6 +160,15 @@ void NAVnode::waypointCollisionDetected(ListNode* node, Obstacle* obstacle){
     switch (circumnavigationStyle){
         case(reroute): routes[routeToEdit].remove(node); break;
         case(trackCrawling): {
+            if (node == nullptr || node->point == nullptr) {
+                return;
+            }
+
+            if (node->previous == nullptr || node->next == nullptr) {
+                routes[routeToEdit].remove(node);
+                return;
+            }
+
             auto pointOfInterest = calculatePointOfInterest(node->previous, node, obstacle);
                 
             /* create a new node to store another waypoint
@@ -171,6 +188,7 @@ void NAVnode::waypointCollisionDetected(ListNode* node, Obstacle* obstacle){
                 // check if the previous waypoint is within 1 radii of the waypoint we just made
                 double dx = node->previous->point->getX() - newWaypoint->point->getX();
                 double dy = node->previous->point->getY() - newWaypoint->point->getY();
+                
                 delete newWaypoint;
                 
                 if (!(sqrt(dx * dx + dy * dy) < obstacle->getRadius())){
@@ -192,7 +210,18 @@ void NAVnode::waypointCollisionDetected(ListNode* node, Obstacle* obstacle){
             */
             double dx = node->next->point->getX() - node->point->getX();
             double dy = node->next->point->getY() - node->point->getY();
-            double* unitVectorToNextWaypoint = new double[2]{dx / sqrt(dx * dx + dy* dy), dy / sqrt(dx * dx + dy * dy)};
+
+            double distanceToNextWaypoint = std::sqrt(dx * dx + dy * dy);
+            
+            if (distanceToNextWaypoint < 1e-9){
+                routes[routeToEdit].remove(node);
+                return;
+            }
+
+            double* unitVectorToNextWaypoint = new double[2]{
+                dx / distanceToNextWaypoint,
+                dy / distanceToNextWaypoint
+            };
                 
             newWaypoint = new ListNode(nullptr, nullptr, 
                 new Waypoint(node->point->getX() + (obstacle->getRadius() + 1) * unitVectorToNextWaypoint[0], node->point->getY() + (obstacle->getRadius() + 1) * unitVectorToNextWaypoint[1]));
@@ -209,7 +238,10 @@ void NAVnode::waypointCollisionDetected(ListNode* node, Obstacle* obstacle){
                 if (!(sqrt(dx * dx + dy * dy) < obstacle->getRadius())){
                     // if moving back one more radii will NOT make a new waypoint behind the first one, then we add a new waypoint 1 radii back from the last one, else we simply omit it
                     newWaypoint = new ListNode(nullptr, nullptr, 
-                        new Waypoint(node->point->getX() + (obstacle->getRadius() * 2 + 1) * pointOfInterest[2], node->point->getY() + (obstacle->getRadius() * 2+ 1) * pointOfInterest[3]));
+                        new Waypoint(
+                            node->point->getX() + (obstacle->getRadius() * 2 + 1) * unitVectorToNextWaypoint[0],
+                            node->point->getY() + (obstacle->getRadius() * 2 + 1) * unitVectorToNextWaypoint[1]
+                        ));
                     
                     routes[routeToEdit].addBefore(newWaypoint, node);
                 }
@@ -254,8 +286,10 @@ void NAVnode::trackCollisionDetected(ListNode* nextNode, Obstacle* obstacle){
                 if (!(sqrt(dx * dx + dy * dy) < obstacle->getRadius())){
                     // if moving back one more radii will NOT make a new waypoint behind the first one, then we add a new waypoint 1 radii back from the last one, else we simply omit it
                     newWaypoint = new ListNode(nullptr, nullptr, 
-                        new Waypoint(pointOfInterest[0] - (obstacle->getRadius() * 2 + 1) * pointOfInterest[2], pointOfInterest[1] - (obstacle->getRadius() * 2 + 1) * pointOfInterest[3]));
-                    
+                        new Waypoint(
+                            pointOfInterest[0] - (obstacle->getRadius() * 2 + 1) * pointOfInterest[2],
+                            pointOfInterest[1] - (obstacle->getRadius() * 2 + 1) * pointOfInterest[3]
+                        ));
                     routes[routeToEdit].addBefore(newWaypoint, nextNode);
                 }
             }
@@ -271,8 +305,8 @@ void NAVnode::trackCollisionDetected(ListNode* nextNode, Obstacle* obstacle){
                 // we'll try the same thing again, taking care not to go past the previous waypoint
 
                 // check if the previous waypoint is within 1 radii of the waypoint we just made
-                double dx = nextNode->previous->point->getX() - newWaypoint->point->getX();
-                double dy = nextNode->previous->point->getY() - newWaypoint->point->getY();
+                double dx = nextNode->point->getX() - newWaypoint->point->getX();
+                double dy = nextNode->point->getY() - newWaypoint->point->getY();
                 delete newWaypoint;
                 
                 if (!(sqrt(dx * dx + dy * dy) < obstacle->getRadius())){
@@ -286,8 +320,6 @@ void NAVnode::trackCollisionDetected(ListNode* nextNode, Obstacle* obstacle){
             else{
                 routes[routeToEdit].addBefore(newWaypoint, nextNode);
             }
-
-            newWaypoint = nullptr;
         }; break;
         case(automatic_Circumnavigation_Off): cout << "collision Detected with Obstacle (" << obstacle->getX() << ", " << obstacle->getY() << ")" << endl; break;
     };
@@ -298,7 +330,10 @@ void NAVnode::generateDetour(double pointOfInterest_X, double pointOfInterest_Y,
     // define unit vector going from POI to centre
     double dx = obstacle->getX() - pointOfInterest_X;
     double dy = obstacle->getY() - pointOfInterest_Y;
-    double length = sqrt(dx * dx + dy * dy);
+    double length = std::sqrt(dx * dx + dy * dy);
+    if (length < 1e-9) {
+    return;
+    }
     double* unitVector = new double[2]{dx / length, dy / length}; // only has two places at index 0 and 1
 
     // following obstacles are used in the worst case scenario of chaining obstacles
@@ -373,9 +408,23 @@ void NAVnode::generateDetour(double pointOfInterest_X, double pointOfInterest_Y,
                         the waypoint that takes us the least off track will be added and the other will be removed
                     */
                     int originalObstacleIndex = getIndexOfObstacle(obstacle);
+                    if (originalObstacleIndex < 0 ||
+                        obstacle1_index < 0 ||
+                        obstacle2_index < 0) {
+                        delete newWaypoint;
+                        delete[] unitVector;
+                        return;
+                    }
+
                     Waypoint* alternative1 = findAlternateRoute(originalObstacleIndex, obstacle1_index);
                     Waypoint* alternative2 = findAlternateRoute(originalObstacleIndex, obstacle2_index);
                     delete newWaypoint;
+                    if (alternative1 == nullptr || alternative2 == nullptr) {
+                        delete alternative1;
+                        delete alternative2;
+                        delete[] unitVector;
+                        return;
+                    }
                         
                     // calculate the distance to alternative 1
                     dx = alternative1->getX() - pointOfInterest_X;
@@ -440,6 +489,11 @@ Waypoint* NAVnode::findAlternateRoute(int first, int second){
             delete[] unitVector;
             int indexOfNextObstacle = findWaypointCollision(possibleWaypoint);
             delete possibleWaypoint;
+
+            if (indexOfNextObstacle < 0 || indexOfNextObstacle >= obstacleCount) {
+                return nullptr;
+            }
+
             return findAlternateRoute(second, indexOfNextObstacle);
         }
     }
@@ -452,12 +506,37 @@ array<double, 4> NAVnode::calculatePointOfInterest(ListNode* start, ListNode* en
     double* vectorToNextWaypoint = new double[2]{end->point->getX() - start->point->getX(), end->point->getY() - start->point->getY()};
     double* vectorToObstacle = new double[2]{obstacle->getX() - start->point->getX(), obstacle->getY() - start->point->getY()};
 
+    double segmentLength = std::sqrt(
+    vectorToNextWaypoint[0] * vectorToNextWaypoint[0] +
+    vectorToNextWaypoint[1] * vectorToNextWaypoint[1]
+        );
+
+    if (segmentLength < 1e-9) {
+        delete[] vectorToNextWaypoint;
+        delete[] vectorToObstacle;
+
+        return {
+            start->point->getX(),
+            start->point->getY(),
+            0.0,
+            0.0
+        };
+    }
     // calculate unit vector representing the direction of the route
-    double* unitVectorToNextWaypoint = new double [2]{vectorToNextWaypoint[0] / sqrt(vectorToNextWaypoint[0]*vectorToNextWaypoint[0] + vectorToNextWaypoint[1]*vectorToNextWaypoint[1]), 
-                                        vectorToNextWaypoint[1] / sqrt(vectorToNextWaypoint[0]*vectorToNextWaypoint[0] + vectorToNextWaypoint[1]*vectorToNextWaypoint[1])};
-        
+    double* unitVectorToNextWaypoint = new double[2]{
+    vectorToNextWaypoint[0] / segmentLength,
+    vectorToNextWaypoint[1] / segmentLength
+        };  
     // project one vector onto the other to find out how far along the route the POI is
-    double projectionLength = vectorToObstacle[0] * unitVectorToNextWaypoint[0] + vectorToObstacle[1] * unitVectorToNextWaypoint[1];
+    double projectionLength =
+        vectorToObstacle[0] * unitVectorToNextWaypoint[0] +
+        vectorToObstacle[1] * unitVectorToNextWaypoint[1];
+
+    projectionLength = std::clamp(
+        projectionLength,
+        0.0,
+        segmentLength
+    );
         
     // use the projection length and the direction to get the coordinates of the POI
     x = start->point->getX() + projectionLength * unitVectorToNextWaypoint[0];
@@ -596,7 +675,7 @@ NAVnode::NAVnode() : Node("NAVnode"), count_(0) {
     }
 
     for (int i = 0; i < 5; i++) {
-        lastFiveWaypoints[i] = currentPosition;
+        lastFiveWaypoints[i] = new Waypoint(currentPosition->getX(), currentPosition->getY());
     }
         
     preference = local;
@@ -624,7 +703,7 @@ NAVnode::NAVnode() : Node("NAVnode"), count_(0) {
     // create services
     StopNavigatingServer      = this->create_service<VoidService>("StopNavigating", std::bind(&NAVnode::stopNavigating, this, _1, _2));
     SelectRouteToFollowServer = this->create_service<SelectRoute>("SelectRoute",    std::bind(&NAVnode::selectRouteToFollow, this, _1, _2));
-    SelectRouteToEditServer   = this->create_service<SelectRoute>("SelectRoute",    std::bind(&NAVnode::selectRouteToEdit, this, _1, _2));
+    SelectRouteToEditServer   = this->create_service<SelectRoute>("SelectRouteToEdit", std::bind(&NAVnode::selectRouteToEdit, this, _1, _2));
     ResetHomeServer           = this->create_service<ResetHome>  ("ResetHome",      std::bind(&NAVnode::resetHome, this, _1, _2));
     ClearRouteServer          = this->create_service<VoidService>("ClearRoute",     std::bind(&NAVnode::clearRoute, this, _1, _2));
         
@@ -1293,7 +1372,7 @@ void NAVnode::removeLocal(const std::shared_ptr<RemoveLocal::Request> request, s
 }
 
 void NAVnode::removeLocalWaypoint(const std::shared_ptr<RemoveLocal::Request> request, std::shared_ptr<RemoveLocal::Response> response){
-    if(routes[routeToFollow].removePoint(request->x, request-> y))
+    if(routes[routeToEdit].removePoint(request->x, request-> y))
         response->output = "Waypoint removed successfully";
     else
         response->output = "Waypoint not in Route";
@@ -1316,7 +1395,7 @@ void NAVnode::removeGeodetic(const std::shared_ptr<RemoveGeodetic::Request> requ
 }
 
 void NAVnode::removeGeodeticWaypoint(const std::shared_ptr<RemoveGeodetic::Request> request, std::shared_ptr<RemoveGeodetic::Response> response){
-    if(routes[routeToFollow].removeGeodeticPoint(request->latitude, request-> longitude))
+    if(routes[routeToEdit].removeGeodeticPoint(request->latitude, request-> longitude))
         response->output = "Waypoint removed successfully";
     else
         response->output = "Waypoint not in Route";
@@ -1339,7 +1418,7 @@ void NAVnode::removeEarthCentred(const std::shared_ptr<RemoveEarthCentred::Reque
 }
 
 void NAVnode::removeEarthCentredWaypoint(const std::shared_ptr<RemoveEarthCentred::Request> request, std::shared_ptr<RemoveEarthCentred::Response> response){
-    if(routes[routeToFollow].removeEarthCentredPoint(request->x, request->y, request->z))
+    if(routes[routeToEdit].removeEarthCentredPoint(request->x, request->y, request->z))
         response->output = "Waypoint removed successfully";
     else
         response->output = "Waypoint not in Route";
@@ -1358,7 +1437,7 @@ void NAVnode::removeLastWaypoint(const std::shared_ptr<RemoveLast::Request> requ
     if(temp == nullptr)
         response->output = "List is already empty";
     else {
-        routes[routeToFollow].removeLast();
+        routes[routeToEdit].removeLast();
         response->output = "Last Waypoint Successfull Removed";
     }
 }
