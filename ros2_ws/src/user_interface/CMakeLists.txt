@@ -34,13 +34,13 @@ FetchContent_MakeAvailable(raygui)
 # Keep this here for now, but i'm not sure if this definition (creating an executable) will work 
 # with our multithreading idea
 ###############################################################################################
-add_executable(UI_Node src/UI_Node.cpp)
-target_include_directories(UI_Node PUBLIC
+add_executable(LaunchNode src/LaunchNode.cpp)
+target_include_directories(LaunchNode PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
   $<INSTALL_INTERFACE:include>
   ${raygui_SOURCE_DIR})
-target_compile_features(UI_Node PUBLIC c_std_99 cxx_std_17)  # Require C99 and C++17
-ament_target_dependencies(UI_Node rclcpp)
+target_compile_features(LaunchNode PUBLIC c_std_99 cxx_std_17)  # Require C99 and C++17
+ament_target_dependencies(LaunchNode rclcpp)
 ###############################################################################################
 
 add_executable(main src/main.cpp)
@@ -56,12 +56,12 @@ endif()
 
 install(TARGETS
   main
-  UI_Node
+  LaunchNode
   DESTINATION lib/${PROJECT_NAME})
 
 
 
-install(FILES include/user_interface/UI_Node.hpp
+install(FILES include/user_interface/LaunchNode.hpp
   DESTINATION include/user_interface)
 
 ament_export_include_directories(include)
