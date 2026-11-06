@@ -1,0 +1,29 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>user_interface</name>
+  <version>0.0.0</version>
+  <description>
+  A package to hold all code relating to the UI for DaVE
+
+  This design will have the UI be a C++ program that will run without any ROS2 functionality
+  In a second thread, we will run a ros 2 node that will facilitate communication between our
+  UI and the Rover
+
+  This separation is so that the timing of of each from as well as the timing related to ros 2 topic 
+  publication/subscription do not affect each other.
+  </description>
+  <maintainer email="isaac.bobmeyer@gmail.com">isaac</maintainer>
+  <license>TODO: License declaration</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+  <depend>rclcpp</depend>
+
+  <test_depend>ament_cmake_gtest</test_depend>
+  <test_depend>ament_lint_auto</test_depend>
+  <test_depend>ament_lint_common</test_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>
