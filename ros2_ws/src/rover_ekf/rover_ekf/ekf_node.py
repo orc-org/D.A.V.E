@@ -151,17 +151,14 @@ class RoverEKFNode(Node):
     def imu_raw_callback(self, msg: Imu):
         """Measurement update for IMU Angular Velocity."""
         omega_z = msg.angular_velocity.z
-        z = np.array([self.x[2], omega_z])
-        H = np.array([
-            [0, 0, 1, 0, 0],
-            [0, 0, 0, 0, 1]
-        ])
+        # Only the yaw rate is measured here. (Feeding the state's own theta back in as a
+        # "measurement" gives zero innovation but still shrinks P, making the filter over-confident.)
+        z = np.array([omega_z])
+        H = np.array([[0, 0, 0, 0, 1]])
         y = z - H @ self.x
-        y[0] = wrap_angle_rad(y[0])
-        S = H @ self.P @ H.T + self.R_imu
+        S = H @ self.P @ H.T + self.R_imu[1:2, 1:2]
         K = self.P @ H.T @ np.linalg.inv(S)
         self.x = self.x + K @ y
-        self.x[2] = wrap_angle_rad(self.x[2])
         self.P = (np.eye(5) - K @ H) @ self.P
 
     def cmd_vel_callback(self, msg: Twist):
@@ -218,7 +215,7 @@ class RoverEKFNode(Node):
     def timer_ekf_loop(self):
         """EKF Prediction Step & State Output Loop."""
         # Calculate wheel odometry forward speed from motor feedback if active
-        wheel_speed = ((self.fl_v + self.rl_v) + (self.fr_v + self.rr_v)) * 0.5
+        wheel_speed = ((self.fl_v + self.rl_v) + (self.fr_v + self.rr_v)) * 0.25  # mean of the four wheels
         if abs(wheel_speed) > 1e-4:
             self.update_wheel_odometry(wheel_speed)
 

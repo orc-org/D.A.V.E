@@ -217,7 +217,7 @@ private:
             "cmd_vel -> Left Wheels: %.2f | Right Wheels: %.2f", left, right);
     }
     std::string current_mode_ = "drive";
-    float sensitivity_ = 0.5f;   // Default = fine
+    float sensitivity_ = 1.0f;   // Default = coarse (full power) until something publishes /sensitivity
 
     rclcpp::Subscription<sensor_msgs::msg::Joy>::SharedPtr joy_sub_;
     rclcpp::Subscription<geometry_msgs::msg::Twist>::SharedPtr cmd_vel_sub_;

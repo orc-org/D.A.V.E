@@ -8,7 +8,7 @@ import Jetson.GPIO as GPIO
 
 
 
-# BCM pin number (CHANGE THIS)
+# Jetson header (BOARD) pin number, see docs/hardware.md
 GPIO_LIGHT_PIN = 12
 
 

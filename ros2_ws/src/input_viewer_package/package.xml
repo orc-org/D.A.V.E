@@ -8,7 +8,7 @@
   <description>PS5 controller input viewer for RViz</description>
 
   <maintainer email="dannyfairall@gmail.com">danny</maintainer>
-  <license>TODO</license>
+  <license>MIT</license>
 
   <buildtool_depend>ament_python</buildtool_depend>
 

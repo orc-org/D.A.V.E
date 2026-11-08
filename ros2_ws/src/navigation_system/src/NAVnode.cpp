@@ -4,6 +4,12 @@
 using std::placeholders::_1;
 using std::placeholders::_2;
 
+// NMEA 0183 encodes angles as ddmm.mmmm (degrees and decimal minutes); convert to decimal degrees
+static double nmeaToDegrees(double ddmm){
+    double degrees = std::floor(ddmm / 100.0);
+    return degrees + (ddmm - degrees * 100.0) / 60.0;
+}
+
 class DummyGPS{
 public:
     DummyGPS(){
@@ -702,7 +708,7 @@ NAVnode::NAVnode() : Node("NAVnode"), count_(0) {
 
     // create services
     StopNavigatingServer      = this->create_service<VoidService>("StopNavigating", std::bind(&NAVnode::stopNavigating, this, _1, _2));
-    SelectRouteToFollowServer = this->create_service<SelectRoute>("SelectRoute",    std::bind(&NAVnode::selectRouteToFollow, this, _1, _2));
+    SelectRouteToFollowServer = this->create_service<SelectRoute>("SelectRouteToFollow", std::bind(&NAVnode::selectRouteToFollow, this, _1, _2));
     SelectRouteToEditServer   = this->create_service<SelectRoute>("SelectRouteToEdit", std::bind(&NAVnode::selectRouteToEdit, this, _1, _2));
     ResetHomeServer           = this->create_service<ResetHome>  ("ResetHome",      std::bind(&NAVnode::resetHome, this, _1, _2));
     ClearRouteServer          = this->create_service<VoidService>("ClearRoute",     std::bind(&NAVnode::clearRoute, this, _1, _2));
@@ -835,7 +841,7 @@ void NAVnode::mainTimer(){
     if (debug){
         // debug mode will print the current value for all our variables to the ros terminal thatt the navigation node is active in
         
-        printf("Current coordinates: %f N %f W \n", currentPosition->getLatitude(), currentPosition->getLatitude());
+        printf("Current coordinates: %f N %f W \n", currentPosition->getLatitude(), currentPosition->getLongitude());
         printf("Route to Follow: %s Route to Edit: %s Coordinate Preference: %s Circumnavigation style: %s \n", getRouteToFollowName().c_str(), getRouteToEditName().c_str(), getPreferenceName().c_str(), getCircumnavigationStyleName().c_str());
         printf("Number of Waypoints: %d Number of Obstacles: %d Current Maximun number of obstacles: %d \n\n\n", waypointCount, obstacleCount, obstacleLimit);
     }
@@ -896,10 +902,10 @@ void NAVnode::updatePositonData(){
             start = message.find("A,", start); // locate start of Latitude section
 
             if (start != string::npos){ // if statement ensures the status is not void
-                latitude = stoi(message.substr(++start, 10));
+                latitude = nmeaToDegrees(stod(message.substr(++start, 10)));
 
                 start = message.find("N,", start); // find start of longitude section
-                longitude = stoi(message.substr(++start, 10));
+                longitude = -nmeaToDegrees(stod(message.substr(++start, 10))); // western hemisphere assumed
 
                 start = message.find(",", start); // find the start of the speed section
                 speed = stoi(message.substr(++start, 5)) * 1.852; // multiply by 1.852 to convert from knots to km/h
@@ -924,16 +930,16 @@ void NAVnode::updatePositonData(){
 
                 start += 4; // get past the $GNGGA, section
                 start = message.find(",", start); // find the start of the latitude section
-                latitude = stoi(message.substr(++start, 10));
+                latitude = nmeaToDegrees(stod(message.substr(++start, 10)));
 
                 start = message.find("N,", start) + 1; // find the start of the longitude section
-                longitude = -stoi(message.substr(++start, 10));
+                longitude = -nmeaToDegrees(stod(message.substr(++start, 10))); // western hemisphere assumed (Alberta/BC)
 
                 start = message.find("W,", start) + 1; // start of the Quality section
                 start = message.find(",", ++start);  // start of the SV count section
                 start = message.find(",", ++start);  // start of the HDOP section
                 start = message.find(",", ++start);  // start of the altitude section
-                altitude = stoi(message.substr(++start, 10));
+                altitude = stod(message.substr(++start, 10));
             }
 
             start = message.find("VTG", 0); // locate the section of the string with the track information
@@ -955,9 +961,9 @@ void NAVnode::updatePositonData(){
     }
     catch (...) { /* If we don't look directly at it, it's as if the error never happened...*/ return; }
 
-    if (currentPosition != nullptr && latitude > 0.0 && longitude > 0.0) {
+    if (currentPosition != nullptr && latitude != 0.0 && longitude != 0.0) {
         delete currentPosition;
-        currentPosition = new Waypoint(latitude,longitude, altitude, true);
+        currentPosition = new Waypoint(longitude, latitude, altitude, true); // constructor order is (longitude, latitude, altitude)
     } else if (currentPosition == nullptr) {
         currentPosition = new Waypoint(0.0, 0.0);
     }
@@ -990,18 +996,10 @@ void NAVnode::updatePositonData(){
             dx = 0.0; dy = 0.0;
         }
 
-        if(dx != 0) {
-            double angle = std::asin(dy / dx);
-
-            if (dx > 0 && dy >= 0)      gnssInformation.bearing2waypoint = Waypoint::pi / 2 - angle;
-            else if (dx < 0 && dy >= 0) gnssInformation.bearing2waypoint = Waypoint::pi * 3 / 2 + angle;
-            else if (dx < 0 && dy < 0)  gnssInformation.bearing2waypoint = Waypoint::pi * 3 / 2 - angle;
-            else if (dx > 0 && dy < 0)  gnssInformation.bearing2waypoint = Waypoint::pi / 2 + angle;
-        }
-        else if (dy > 0)
-            gnssInformation.bearing2waypoint = 0;
-        else 
-            gnssInformation.bearing2waypoint = Waypoint::pi;
+        // compass bearing to the waypoint: radians clockwise from north (+y), in [0, 2*pi)
+        double bearing = std::atan2(dx, dy);
+        if (bearing < 0.0) bearing += 2.0 * Waypoint::pi;
+        gnssInformation.bearing2waypoint = bearing;
     } else {
         gnssInformation.waypoint_local_x = 0.0;
         gnssInformation.waypoint_local_y = 0.0;
@@ -1205,7 +1203,7 @@ void NAVnode::selectRouteToEdit(const std::shared_ptr<SelectRoute::Request> requ
 }
 
 void NAVnode::resetHome(const std::shared_ptr<ResetHome::Request> request, std::shared_ptr<ResetHome::Response> response){
-    Waypoint* point = new Waypoint(request->latitude, request->longitude, 0, true);
+    Waypoint* point = new Waypoint(request->longitude, request->latitude, 0, true); // constructor order is (longitude, latitude, altitude)
 
     if(point->setHome(point, request->password))
         response->success = true;

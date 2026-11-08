@@ -11,6 +11,9 @@ find_package(rclcpp REQUIRED)
 find_package(serial_interfaces REQUIRED)
 find_package(std_msgs REQUIRED)
 
+# Single source of truth for SerialPort.hpp lives in include/serial_communication
+include_directories(${CMAKE_CURRENT_SOURCE_DIR}/include/serial_communication)
+
 set(SOURCE_FILES
   src/SerialPort.cpp 
 )

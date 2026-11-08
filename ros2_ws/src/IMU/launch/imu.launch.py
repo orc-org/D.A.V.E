@@ -1,6 +1,7 @@
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
-from launch.substitutions import LaunchConfiguration
+from launch.substitutions import LaunchConfiguration, PythonExpression
+from launch_ros.parameter_descriptions import ParameterValue
 from launch_ros.actions import Node
 
 def generate_launch_description():
@@ -41,6 +42,8 @@ def generate_launch_description():
         name='imu_kalman_filter',
         output='screen',
         parameters=[{
+            # filter step must match the telemetry publish period
+            'dt': ParameterValue(PythonExpression(['1.0 / ', LaunchConfiguration('publish_rate')]), value_type=float),
             'topic_raw_imu': '/imu/data_raw',
             'topic_filtered_imu': '/imu/data_filtered',
             'topic_odom': '/imu/odometry',

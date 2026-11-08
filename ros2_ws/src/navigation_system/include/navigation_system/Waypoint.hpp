@@ -169,7 +169,7 @@ public:
     */
     void local_To_EarthCentred();
 
-    static std::array<double,3> local_To_EarthCentred(int x, int y);
+    static std::array<double,3> local_To_EarthCentred(double x, double y);
     
     /*
     EarthCentered_To_Geodetic()
@@ -181,5 +181,5 @@ public:
     */
     void EarthCentred_To_GeodeticApprox();
 
-    static std::array<double,2> local_To_GeodeticApprox(int x, int y);
+    static std::array<double,2> local_To_GeodeticApprox(double x, double y);
 };

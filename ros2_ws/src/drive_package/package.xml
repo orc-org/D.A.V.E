@@ -8,7 +8,7 @@
   <description>Has my driving system and input viewer in it</description>
 
   <maintainer email="danny@todo.todo">danny</maintainer>
-  <license>TODO</license>
+  <license>MIT</license>
 
   <buildtool_depend>ament_cmake</buildtool_depend>
 

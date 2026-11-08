@@ -149,7 +149,7 @@ public:
     NAVDisplay() : Node("NAVDisplay") {
 
         // Create Ros2 Topic Subscribers
-        DisplayInfoSubscriber = this->create_subscription<DisplayInfo>("DisplayInfo", 10, std::bind(&NAVDisplay::getInfo, this, _1));
+        DisplayInfoSubscriber = this->create_subscription<DisplayInfo>("NAVDisplayInfo", 10, std::bind(&NAVDisplay::getInfo, this, _1));
 
         // Create Ros2 Service Clients
         SelectRouteToFollowClient = this->create_client<SelectRoute> ("SelectRouteToFollow");
