@@ -45,3 +45,11 @@ NAVnode
 .env
 .python-version
 *.orig
+
+# SLAM program: recorded data, benchmark logs and the external overlay workspace
+slam_ws/
+bags/
+*.db3
+*.db3.zstd
+*.mcap
+bench/

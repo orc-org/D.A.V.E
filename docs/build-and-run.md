@@ -79,6 +79,10 @@ Pins, CAN IDs and serial ports are in [hardware.md](hardware.md). Standalone har
 - `scripts/tests/waypoint_conversion_test.cpp` — no-ROS numeric test of the coordinate conversions; the build command is in the file header. It passes against the current `Waypoint.cpp`.
 - Four Python packages carry the standard ament lint tests (copyright, flake8, pep257). There are no behavioural tests for the drive, arm, EKF or navigation code.
 
+## SLAM data capture and benchmarking
+
+`scripts/slam/` holds helpers for recording datasets and logging Jetson load; see [`scripts/slam/README.md`](../scripts/slam/README.md) and [slam/research-plan.md](slam/research-plan.md). They have been syntax-checked only.
+
 ## Simulation
 
 `ros2 launch rover_description sim.launch.py` starts Gazebo, RViz, `robot_state_publisher`, the drive node and `sim_drive_bridge.py`, which re-publishes `/cmd_vel` as `/cmd_vel_sim` for the simulated skid-steer plugin. The robot model, including the arm (`rover_arm.xacro`), is parameterised from `physical_params.yaml`. See [`ros2_ws/src/rover_description/README.md`](../ros2_ws/src/rover_description/README.md).

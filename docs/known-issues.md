@@ -74,4 +74,4 @@ Directions worth considering, roughly in order of risk:
 3. **Terrain-aware mapping** (2.5-D elevation map with traversability cost) feeding a real planner such as Nav2 with a custom costmap layer. Matters for rough ground where flat 2-D maps fail.
 4. **LiDAR-inertial SLAM** (FAST-LIO2 / LIO-SAM) if a lidar can be added. Most robust, but new hardware.
 
-None of this exists yet; choosing a direction depends on which sensors will be on the rover.
+Update: a sensor choice has been made (Jetson Orin Nano Super with a Unitree 4D LiDAR), and the options above have been researched in detail. See [slam/README.md](slam/README.md) for the platform notes, literature review, proposed three-layer design and experiment plan. Nothing from that design is implemented yet.

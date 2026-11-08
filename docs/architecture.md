@@ -56,6 +56,8 @@ BNO085 ─► telemetry ─► /imu/data_raw, /imu/euler ─┬─► kalman_fil
 GNSS ─► NAVnode (opens its own serial port) ─► NAVDisplayInfo ─► NAVDisplay (raylib map)
 ```
 
+> Planned perception layers (LiDAR-inertial odometry, planner map, Gaussian terrain map) are described in [slam/architecture.md](slam/architecture.md). They are not part of the graph below yet.
+
 ## Topic, service and action map
 
 Topics (publisher → subscribers):

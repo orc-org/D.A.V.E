@@ -1,0 +1,150 @@
+# Research plan
+
+How to turn [architecture.md](architecture.md) into evidence. Each experiment has a question, a method, the metric that decides it, and what happens if it fails. Scripts referenced here are listed in [code-map.md](code-map.md); the ones marked *planned* do not exist yet.
+
+## Objectives
+
+1. **Engineering goal.** The rover navigates autonomously between GNSS waypoints while avoiding obstacles it senses itself (LAYER 1 + 2).
+2. **Research goal.** Show whether a LiDAR-seeded surfel-Gaussian terrain map gives traversability that is as accurate as, or better than, an elevation-map baseline while fitting within an 8 GB edge budget (LAYER 3).
+
+The first goal must succeed independently of the second.
+
+## Novelty claim (and how to test it)
+
+Candidate claim **[I]**:
+
+> A LiDAR-seeded surfel-Gaussian map on an 8 GB Jetson that derives traversability from surface normals alone, without a semantic network, and is compared against an elevation-map baseline on rover-style terrain.
+
+Prior art that bounds it (details in [literature.md](literature.md#closest-prior-art-to-the-proposed-contribution-splatblox)):
+
+- **Splatblox** already does Gaussian traversability for outdoor navigation, but with CLIPSeg semantics, on a laptop GPU, with no released code.
+- **GS-LIVO** already runs LiDAR-seeded Gaussian mapping on a Jetson (Orin NX 16 GB), but for mapping and odometry, not traversability.
+
+Before committing to the claim, do a proper novelty search for 2025–2026 papers on "Gaussian traversability Jetson", "surfel Gaussian terrain", and "LiDAR Gaussian elevation map". The searches done so far were broad **[?]**.
+
+If the claim fails (someone has done it, or the Gaussian layer does not beat the baseline), the fallback contribution is a **well-measured Orin Nano benchmark** of Layers 1–3 on a real rover, which is also useful and publishable as a systems paper **[I]**.
+
+## Decisions needed
+
+| # | Decision | Needed before | Default if undecided |
+|---|---|---|---|
+| D1 | Which camera, and is it synchronised/stereo? | E0 camera calibration, any photometric work | Use the existing CSI cameras; camera is optional |
+| D2 | L2 or L1 | Purchase | L2 |
+| D3 | Is Layer 3 a thesis/paper contribution or optional extra? | E3 scope | Optional extra |
+| D4 | Nav2 adoption or extend `NAVnode` | E4 | Nav2 for control, `NAVnode` for waypoints |
+| D5 | Ground truth: RTK GNSS or total-station/mocap? | E1 | RTK if available, else loop-closure error |
+| D6 | Competition task list (which autonomy tasks matter) | Planning priorities | Waypoint navigation with obstacles |
+
+## E0 — Bring-up and calibration
+
+**Question:** can the sensors be read reliably on the Jetson, and are the extrinsics and time offsets known?
+
+Tasks:
+1. Flash JetPack 6.2.x; set the power mode; record `nvpmodel -q` output ([`scripts/slam/jetson_perf_setup.sh`](../../scripts/slam/jetson_perf_setup.sh)).
+2. Build the Unitree driver for Ubuntu 22.04 / Humble; confirm the topics and message types; measure the real IMU rate and scan rate (the manual could not be read **[?]**).
+3. Put the L2 on its own interface/subnet; confirm it does not disturb DDS ([platform.md](platform.md#integration-problems-found-on-paper)).
+4. Measure LiDAR mount pose; add the link to the URDF; verify the LiDAR–IMU transform with a rotation-only test.
+5. If a camera is used: intrinsics, LiDAR–camera extrinsics, and the time offset.
+
+Exit criterion: a rosbag of 10 minutes of static + driving data replays with sane TF and no dropped scans.
+
+## E1 — Odometry bench-off
+
+**Question:** which LiDAR-inertial odometry runs best on the Orin Nano Super with the Unitree L2?
+
+Candidates: Point-LIO ROS 2 (Unitree port), a FAST-LIO2 ROS 2 port, DLIO, KISS-ICP, GLIM **[S]**.
+
+Method: record several routes with [`scripts/slam/record_bag.sh`](../../scripts/slam/record_bag.sh), including a loop that returns to the start and a stretch with RTK GNSS. Replay each algorithm on identical bags while logging load with [`scripts/slam/bench_tegrastats.sh`](../../scripts/slam/bench_tegrastats.sh). Use the same point-cloud thinning for everyone.
+
+| Metric | How |
+|---|---|
+| Absolute trajectory error | vs RTK GNSS where available |
+| Loop-closure drift | end-point error on returning loops, per metre travelled |
+| Vertical drift | z error on flat ground (a reported weakness of FAST-LIO2 on a Unitree-class platform **[S]**) |
+| CPU use, RAM, output rate, latency | `tegrastats`, ROS timestamps |
+| Robustness | start-up delay, behaviour with open sky vs tall obstacles, behaviour when the arm moves |
+
+Gate: pick the algorithm with the lowest drift that holds ≥ 10 Hz pose output within the Layer 1 budget. If none does, thin the cloud, lower the L2 rotation rate, or move to MAXN_SUPER and re-measure before changing hardware.
+
+## E2 — Fusion with GNSS and wheels
+
+**Question:** does adding LIO to `rover_ekf` improve the global pose over GNSS + IMU + wheel speed alone?
+
+Method: implement the velocity update and the aligned pose update ([architecture.md](architecture.md#fusion--one-global-pose-existing-code-extended)); compare three configurations on the E1 bags: (a) current EKF, (b) + LIO velocity, (c) + LIO pose.
+
+Also settle the yaw-convention and frame-origin questions in [known-issues.md](../known-issues.md#2-open--needs-measurement-or-a-team-decision) (items 4–6) as part of this experiment.
+
+Gate: (c) or (b) must beat (a) on drift and not degrade when GNSS is degraded.
+
+## E3 — Planner map and the Gaussian layer
+
+Two stages, so that Layer 2 ships even if Layer 3 does not.
+
+**E3a — Baseline.** Build the elevation/traversability grid (Layer 2). Label traversable vs non-traversable ground on recorded segments (manual annotation, plus where the rover actually drove). Metrics: precision/recall of the blocked class, map update rate, memory.
+
+**E3b — Gaussian layer.** Install the candidate implementation (GS-LIVO is the only public embedded-class one found; verify it builds against CUDA 12.6 and JetPack 6.2 **[?]**) or write a minimal LiDAR-seeded surfel map.
+
+Scaling study on the Nano: sweep the Gaussian cap (for example 10 k, 20 k, 50 k, 100 k) and image size; record update rate, CPU/GPU memory, and thermal behaviour in 7 W, 15 W, 25 W and MAXN_SUPER modes.
+
+Comparison: traversability from Gaussian normals vs the baseline on the same labelled segments, at equal memory and equal update rate.
+
+| Metric | Why |
+|---|---|
+| Precision/recall of blocked cells | Safety and progress |
+| Surface normal error vs a reference mesh/point cloud | Is the Gaussian surface actually better? |
+| Memory (CPU/GPU), update rate, power | The edge claim |
+| Failure cases | Overhanging vegetation, thin obstacles, steep edges, glare on the LiDAR |
+
+Gate: continue with Layer 3 only if it matches the baseline within the budget **and** shows a benefit (for example better edge or slope accuracy at the same memory). Otherwise stop and report the negative result.
+
+## E4 — Closed-loop navigation
+
+**Question:** does the rover reach waypoints, avoiding obstacles, using the stack?
+
+Method: waypoints and obstacles on a field course; run with the bridge (`AddLocalObstacle`) first, then Nav2. Metrics: success rate, path length ratio, minimum obstacle clearance, interventions, time. At least 10 runs per condition (Splatblox used 3–10 per scenario, which is too few to claim much **[M]**).
+
+## E5 — Stretch topics (only if E1–E4 succeed)
+
+- Terrain-physics estimate from wheel slip using MPM-style priors (PhysGaussian/GASP/PhysGS **[S]**). Needs wheel encoders or an equivalent speed signal.
+- Moving-object rejection and dynamic mapping (4D/deformation literature **[S]**).
+- Camera-only fallback (VGGT-style or cuVSLAM) for LiDAR failure.
+
+## Data management
+
+- One bag per run; name `<site>_<yyyymmdd>_<run>`; keep a spreadsheet of site, weather, mount configuration, power mode, git commit.
+- Point clouds are large; use zstd compression (the record script does) and expect gigabytes per hour **[I]**.
+- Raw bags do not belong in git; `bags/`, `*.db3`, `*.mcap` and `slam_ws/` are in the root `.gitignore`. Keep bags on external storage and record their location in the run log.
+
+## Risks
+
+| Risk | Likelihood **[I]** | Mitigation |
+|---|---|---|
+| Unitree ROS 2 driver does not build on Humble / JetPack 6 | Medium | Use the C++ SDK directly and write a thin ROS 2 wrapper |
+| 8 GB shared memory exhausted | High for Layer 3 | Gaussian cap, CPU-side map, kill switch |
+| LIO drifts vertically or fails on open flat terrain | Medium | GNSS + wheel fusion; try LiDAR-only (KISS-ICP) and tighter IMU weighting |
+| LiDAR cannot see the ground near the rover (blind zone, mounting, arm shadow) | Medium | Mount geometry study in E0; second pass with a tilted mount |
+| Direct sunlight or dust reduces LiDAR returns | Low–medium | > 100 klux rating is encouraging **[P]**; verify outdoors |
+| Time offset between LiDAR and camera spoils photometric refinement | High if a camera is used | Measure and store the offset; run Layer 3 geometry-only |
+| Novelty already claimed | Medium | Novelty search before committing; fallback to systems benchmark |
+| Thermal throttling in the enclosure | Medium | Heat-sink/fan plan; test sustained load for 30 minutes |
+| Scope creep from the topic list | High | Priorities in [literature.md](literature.md#summary-table); only E5 touches deferred topics |
+
+## Reading list (in order)
+
+1. Unitree L2 manual (the PDF could not be machine-read; read it by hand) and the `unilidar_sdk2` README.
+2. GS-LIVO paper (Sections III–IV and Tables II–IV).
+3. Splatblox paper, especially Sections III-B and III-C.
+4. 2DGS paper (losses and normal definition).
+5. nvblox documentation and the Nav2 + Isaac Perceptor tutorial.
+6. The odometry candidates' papers and READMEs: Point-LIO, FAST-LIO2, DLIO, KISS-ICP, GLIM.
+7. Continual 3DGS on Orin Nano (arXiv 2603.08499) for what already fits the board.
+
+## Checklist for the first month
+
+- [ ] Camera model confirmed (D1)
+- [ ] L2 ordered and a mount designed
+- [ ] JetPack 6.2.x flashed; performance script run and logged
+- [ ] Unitree driver builds on Humble; message types and rates recorded
+- [ ] First 10-minute bag recorded and replayable
+- [ ] Odometry candidates installed and running on that bag
+- [ ] Novelty search written up in this folder
