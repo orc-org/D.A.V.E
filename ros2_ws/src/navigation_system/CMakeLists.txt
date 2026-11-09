@@ -53,7 +53,8 @@ target_link_libraries(NAVnode raylib)
 
 add_executable(NAVDisplay ${NAVDISPLAY_SOURCES})
 target_link_libraries(NAVDisplay raylib)
-ament_target_dependencies(NAVDisplay rclcpp rclcpp_action navigation_interfaces raylib serial_communication)
+# raylib is linked as a CMake target on the next line; it is not an ament package, so it must not be listed here
+ament_target_dependencies(NAVDisplay rclcpp rclcpp_action navigation_interfaces serial_communication)
 
 target_include_directories(NAVnode PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include/navigation_system>

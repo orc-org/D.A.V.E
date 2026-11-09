@@ -919,7 +919,8 @@ void NAVnode::updatePositonData(){
 
                 if(!date.empty()){
                     start = message.find(",", start);
-                    date = message.substr(++start, 2) + "/" + message.substr(start + 2, 2) + "/" + message.substr(start + 4, 2);
+                    ++start;   // step past the comma (kept separate: the operands below are evaluated in unspecified order)
+                    date = message.substr(start, 2) + "/" + message.substr(start + 2, 2) + "/" + message.substr(start + 4, 2);
                 }
             }
         }
