@@ -26,9 +26,32 @@ Gaussian-splatting SLAM papers often use the Gaussian map to track the camera. O
 
 Each layer publishes standard ROS 2 messages and has a **kill switch**: if a layer exceeds its budget the layer below remains valid.
 
+## Sensor contract (camera-agnostic)
+
+The code is written against these canonical topics. A launch file remaps whatever a specific driver publishes onto them, so changing the LiDAR or camera changes one remap, not the algorithms.
+
+| Canonical topic | Type | Required? | Notes |
+|---|---|---|---|
+| `/lidar/points` | `sensor_msgs/PointCloud2` | yes | Per-point timestamps preferred for deskewing; frame `lidar_link` |
+| `/lidar/imu` | `sensor_msgs/Imu` | yes (LiDAR odometry) | Unitree: `unilidar/imu`; frame `lidar_imu_link` |
+| `/camera/color/image` | `sensor_msgs/Image` | optional | Used by the Gaussian layer and for classification |
+| `/camera/color/camera_info` | `sensor_msgs/CameraInfo` | with colour | Intrinsics and distortion |
+| `/camera/depth/image` | `sensor_msgs/Image` (32FC1 metres or 16UC1 mm) | optional | Aligned to colour if possible; otherwise a separate `camera_info` |
+| `/camera/depth/camera_info` | `sensor_msgs/CameraInfo` | with depth | |
+
+Hard requirements for any camera **[I]**:
+
+1. Stamped images on the same clock as the LiDAR (one machine clock via `chrony`/PTP, or a measured fixed offset stored in `extrinsics.yaml`).
+2. A calibrated pose `base_link → camera_link` and intrinsics in `CameraInfo`.
+3. Known depth range and noise, set in the camera's config file so the mapper can weight it (a 4–5 m infrared camera and a 10 m stereo camera must not be trusted equally).
+
+Properties that *vary* by camera and are handled by configuration, not code: shutter type (rolling shutter degrades photometric refinement), depth technology (infrared depth degrades in sunlight), resolution and rate (the Gaussian layer downscales to a fixed working size), and whether the camera has an IMU (not needed; the LiDAR IMU is used).
+
+All consumers must also run with the camera absent: Layer 1 needs only the LiDAR, Layer 2 works from the LiDAR alone, and Layer 3 falls back to geometry-only.
+
 ## Layer 1 — LiDAR-inertial odometry
 
-- **Input:** `unilidar/cloud` and `unilidar/imu` from the driver ([platform.md](platform.md#software-support)). Frames `unilidar_lidar` and `unilidar_imu` with the SDK's fixed IMU offset.
+- **Input:** `unilidar/cloud` and `unilidar/imu` from the driver ([platform.md](platform.md#software-support)). The Unitree driver names its frames `lidar_link` and `lidar_imu_link`; the launch file maps them to the canonical `lidar_link` and `lidar_imu_link` (with the SDK's fixed IMU offset) so other LiDARs can be swapped in.
 - **Candidates** (decided by the bench-off in [research-plan.md](research-plan.md#e1--odometry-bench-off)): Point-LIO ROS 2 port with Unitree support; FAST-LIO2 ROS 2 ports; DLIO; KISS-ICP (LiDAR only); GLIM **[S]**. All run on the CPU; the GPU stays free for Layer 3.
 - **Output:** `nav_msgs/Odometry` with covariance; the deskewed cloud in the sensor frame; **no TF**. The LIO node must not publish `odom → base_link`; `rover_ekf` owns that transform (see [Frames](#frames-and-calibration)).
 - **Dynamic points:** the arm, the mast and people must not enter the map. Mask a configurable body-shaped region in the sensor frame (the arm's reach comes from `physical_params.yaml`) and reject points with large temporal inconsistency **[I]**.
@@ -55,6 +78,8 @@ Goal: let the rover drive autonomously with **no research risk**.
 | B. 2.5-D elevation grid | Height, slope, roughness and step per cell on a rolling grid | Better fit for rough, open terrain than a full 3-D voxel map. Candidate packages (`grid_map`, a GPU elevation mapper) are from background knowledge and not verified **[I]** |
 
 Recommendation: implement B as the reference baseline (cheap, transparent, and it is the comparison point for Layer 3), and evaluate A for its Nav2 integration.
+
+**Depth camera in Layer 2.** When present, depth images are integrated alongside the LiDAR (nvblox accepts depth cameras and 3-D LiDAR at once **[S]**; the elevation grid takes a second point source) to fill the near field that the LiDAR misses. Each source carries its own noise model and maximum range.
 
 Output (planned): `/terrain/traversability` as a `nav_msgs/OccupancyGrid` (0–100 cost) in the `odom` or `map` frame.
 
@@ -110,8 +135,9 @@ map ──(GNSS alignment)──► odom ──(rover_ekf)──► base_link �
 
 | Topic | Type | Producer | Consumers |
 |---|---|---|---|
-| `unilidar/cloud` | `sensor_msgs/PointCloud2` (assumed) | Unitree driver | Layer 1 |
-| `unilidar/imu` | `sensor_msgs/Imu` (assumed) | Unitree driver | Layer 1 |
+| `unilidar/cloud` → `/lidar/points` | `sensor_msgs/PointCloud2` (assumed) | Unitree driver (remapped) | Layer 1 |
+| `unilidar/imu` → `/lidar/imu` | `sensor_msgs/Imu` (assumed) | Unitree driver (remapped) | Layer 1 |
+| `/camera/color/image`, `/camera/depth/image` and their `camera_info` | `Image`, `CameraInfo` | camera driver (remapped) | Layers 2, 3 (optional) |
 | `/slam/odometry` | `nav_msgs/Odometry` | Layer 1 | `rover_ekf`, dashboard |
 | `/slam/cloud_deskewed` | `sensor_msgs/PointCloud2` | Layer 1 | Layers 2, 3 |
 | `/ekf/odometry` | `nav_msgs/Odometry` | `rover_ekf` (exists) | planners, dashboard |

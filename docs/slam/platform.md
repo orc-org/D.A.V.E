@@ -92,9 +92,17 @@ Unitree does **not** sell a bundled LiDAR + camera **[P]**. What its pages show:
 
 A 4–5 m depth range is useless for outdoor terrain at rover speeds, so a depth camera adds little over the LiDAR. What a camera adds is **colour and texture** (for the Gaussian layer and for classification) and **visual odometry** if it is stereo and synchronised.
 
-**Decision needed:** confirm exactly which camera is being supplied. Until then the design treats the camera as an optional `sensor_msgs/Image` + `CameraInfo` source with a calibrated extrinsic to the LiDAR ([architecture.md](architecture.md#frames-and-calibration)).
+**Design assumption (decided):** the rover will carry a 3-D LiDAR (a Unitree model) and a depth camera. The exact camera is not fixed and may be a Unitree depth camera or a general-purpose one, so the design depends only on the **sensor contract** below, not on a model. See [architecture.md](architecture.md#sensor-contract-camera-agnostic).
 
-If a purchase is still open, the main options are **[I]**:
+What the depth camera is for **[I]**:
+
+- **Near field.** The LiDAR has a 0.05 m blind zone and, mounted high, may not see the ground close to the wheels or low obstacles in front of the rover. A depth camera covers roughly the first few metres.
+- **Colour and texture** for the Gaussian layer and for any classification.
+- **Redundancy.** If the LiDAR fails or is shadowed by the arm, the camera keeps a short-range map alive.
+
+What it is *not* for: long-range mapping or odometry (infrared depth is short-range and degrades in sunlight; the unnamed Unitree depth camera quotes only 4–5 m).
+
+If a camera is still to be chosen, the options are **[I]**:
 
 | Option | Gives | Cost to the design |
 |---|---|---|

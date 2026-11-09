@@ -28,7 +28,7 @@ If the claim fails (someone has done it, or the Gaussian layer does not beat the
 
 | # | Decision | Needed before | Default if undecided |
 |---|---|---|---|
-| D1 | Which camera, and is it synchronised/stereo? | E0 camera calibration, any photometric work | Use the existing CSI cameras; camera is optional |
+| D1 | ~~Which camera~~ **Resolved:** design to the [sensor contract](architecture.md#sensor-contract-camera-agnostic); any depth camera meeting it is acceptable. Remaining question: its measured depth range, noise and time offset | E0 camera calibration, any photometric work | Treat the camera as optional until its contract values are measured |
 | D2 | L2 or L1 | Purchase | L2 |
 | D3 | Is Layer 3 a thesis/paper contribution or optional extra? | E3 scope | Optional extra |
 | D4 | Nav2 adoption or extend `NAVnode` | E4 | Nav2 for control, `NAVnode` for waypoints |

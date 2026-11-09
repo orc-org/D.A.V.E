@@ -4,6 +4,12 @@ Goal: give D.A.V.E. a pose estimate that does not depend on GNSS alone, a map it
 
 This folder is the working record of that program: what was researched, what was decided, what is still a guess, and exactly where in the repository each piece lives or will live.
 
+## Design assumptions (set by the team)
+
+- **Sensors:** a 3-D LiDAR (a Unitree model; the L2 is preferred) and a depth camera. The camera model is deliberately **not** fixed; everything is designed against the [sensor contract](architecture.md#sensor-contract-camera-agnostic) so a Unitree depth camera or a general-purpose one can be dropped in.
+- **Compute:** Jetson Orin Nano Super Developer Kit (8 GB shared memory).
+- **Software:** ROS 2 Humble on Ubuntu 22.04 (JetPack 6.x). Why ROS 2, whether Linux is required and how it compares with MuJoCo and other simulators is in [../ros-and-simulation.md](../ros-and-simulation.md).
+
 ## Read in this order
 
 | # | Page | Read it to learn |
@@ -33,7 +39,7 @@ Nothing here has been run on the Jetson. Every performance figure is either a pu
 
 - **Done:** literature and hardware research; architecture proposal; research plan; repository scaffolding for data capture and benchmarking (see [code-map.md](code-map.md)).
 - **Not done:** no sensor has been connected; no SLAM package is installed; the Unitree driver has not been built for JetPack 6 / ROS 2 Humble; nothing has been benchmarked on the Orin Nano.
-- **Open decisions** (details in [research-plan.md](research-plan.md#decisions-needed)): which camera, L1 or L2, whether the Gaussian layer is a research contribution or an optional extra, and which odometry front end wins the bench-off.
+- **Open decisions** (details in [research-plan.md](research-plan.md#decisions-needed)): L1 or L2, whether the Gaussian layer is a research contribution or an optional extra, and which odometry front end wins the bench-off. The camera model is no longer blocking; only the contract has to be met.
 
 ## The recommendation in six lines
 
