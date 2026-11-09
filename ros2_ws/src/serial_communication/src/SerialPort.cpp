@@ -254,7 +254,10 @@ void SerialPort::write(std::string message){
 }
 
 void SerialPort::write(char* message){
-    ::write(serial_port, message, sizeof(message));
+    // sizeof(message) is the size of the pointer (8 bytes), not of the text it points to
+    if (message == nullptr) return;
+    ssize_t written = ::write(serial_port, message, std::strlen(message));
+    if (written < 0) printf("Error %d writing to serial port: %s\n", errno, std::strerror(errno));
 }
 
 std::string SerialPort::read(){

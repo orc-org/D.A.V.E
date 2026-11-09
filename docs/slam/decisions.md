@@ -2,6 +2,17 @@
 
 Where [architecture.md](architecture.md) says *what* the system is, this page says *which tool goes in each slot*, *how the team develops and diagnoses*, and *how one research-grade stack and one rover-grade stack share work*. Evidence labels as in [README.md](README.md#evidence-labels): **[P]** primary, **[S]** search/secondary, **[M]** model summary, **[I]** recommendation, **[background]** general knowledge not checked during this project.
 
+## Guiding rule: keep it lean, and write our own where it is cheap
+
+The tool table in section 2 is a menu, not a shopping list. The team can, and for fun and learning intends to, write many of these pieces itself. So:
+
+1. **Adopt a dependency only when it removes real work or risk.** Drivers, ROS 2, rosbag, tf2 and a planner are worth adopting; a large framework used for one feature is not.
+2. **Prefer small, readable, replaceable code** behind the shared interfaces (the [sensor contract](architecture.md#sensor-contract-camera-agnostic) and the `/terrain/traversability` output). A home-grown node and a third-party node should be swappable without touching anything else.
+3. **Candidates for writing ourselves** (each is small enough to be a good first project, and each has a published baseline to compare against): the elevation/traversability grid, the corridor safety stop, the GNSS alignment node, the obstacle bridge, the LiDAR–IMU body mask, the minimal surfel Gaussian map, the student traversability model, and trajectory-evaluation scripts. See [code-map.md](code-map.md#planned-code-does-not-exist-yet).
+4. **Do not write ourselves:** the vendor LiDAR driver, DDS, the real-time/safety firmware on the motor controllers, and a general SLAM back end unless the bench-off shows nothing adequate.
+5. **Every third-party component must justify itself against a baseline** in the experiments ([research-plan.md](research-plan.md)); if our own version is within the agreed margin, keep ours.
+6. **Install lean:** start from `ros-base` plus only what the workspace needs, and add Gazebo, RViz extras or Isaac ROS when the matching phase begins, not before.
+
 ## 1. Development and diagnosis environment
 
 ### Findings on this machine (checked 2026-11-08)
