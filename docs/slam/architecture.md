@@ -122,12 +122,12 @@ These combine into a cost in [0, 1] and are published as the same `OccupancyGrid
 Planned transform tree:
 
 ```
-map ──(GNSS alignment)──► odom ──(rover_ekf)──► base_link ──► unilidar_lidar
-                                                    │            └─► unilidar_imu   (fixed: −0.007698, −0.014655, 0.00667 m)
+map ──(GNSS alignment)──► odom ──(rover_ekf)──► base_link ──► lidar_link
+                                                    │            └─► lidar_imu_link (fixed: −0.007698, −0.014655, 0.00667 m)
                                                     └──► camera_link ──► camera_optical_frame
 ```
 
-- `base_link → unilidar_lidar` and `base_link → camera_link` are **measured extrinsics**, stored in a config file (planned: `ros2_ws/src/rover_slam/config/extrinsics.yaml`) and published by `robot_state_publisher`/static transforms. The URDF in `rover_description` should gain a LiDAR link so the model, RViz and the code agree.
+- `base_link → lidar_link` and `base_link → camera_link` are **measured extrinsics**, stored in a config file (planned: `ros2_ws/src/rover_slam/config/extrinsics.yaml`) and published by `robot_state_publisher`/static transforms. The URDF in `rover_description` should gain a LiDAR link so the model, RViz and the code agree.
 - LiDAR–camera calibration (extrinsic rotation/translation) and **time offset** are required before any photometric work. No PPS or PTP was found for either Unitree sensor **[?]**, so measure the offset with a flashing-target or motion-correlation method and store it.
 - LiDAR–IMU: use the SDK transform, then verify with a rotation-only test.
 
