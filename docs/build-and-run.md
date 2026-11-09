@@ -28,7 +28,7 @@ colcon build --symlink-install
 
 ### Verified build status (WSL2, Ubuntu 22.04, Humble)
 
-15 of 16 packages build with the commands above. `navigation_system` needs `raylib`, which is not in the ROS dependencies and was not installed in the WSL2 environment; install it (for example from source) before building that package, or build with `--packages-skip navigation_system`. See [slam/decisions.md](slam/decisions.md#status-of-the-wsl2-environment-set-up-2026-11-08).
+All 16 packages build with the commands above. `navigation_system` needs `raylib`, which is not a ROS dependency: on Ubuntu 22.04 it was built from source into `~/opt/raylib` (static, no `sudo` install) and passed to CMake; see [slam/decisions.md](slam/decisions.md#status-of-the-wsl2-environment-set-up-2026-11-08) for the exact flags. `scripts/tests/navnode_nmea_smoke_test.sh` checks `NAVnode` end to end without hardware.
 
 ## One-command launchers
 

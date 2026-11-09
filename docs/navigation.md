@@ -124,6 +124,10 @@ Action: `FollowRoute` accepts and cancels any goal but does not execute anything
 
 Topic: `NAVDisplayInfo` (`navigation_interfaces/DisplayInfo`) carries rover and waypoint positions in all three systems, `heading`, `bearing2waypoint`, `range2waypoint`, speed and the current preference/route selection.
 
+## Testing without hardware
+
+[`scripts/tests/waypoint_conversion_test.cpp`](../scripts/tests/waypoint_conversion_test.cpp) checks the coordinate maths with no ROS. [`scripts/tests/navnode_nmea_smoke_test.sh`](../scripts/tests/navnode_nmea_smoke_test.sh) runs the real `NAVnode` against a virtual serial port that feeds it an NMEA sentence, then checks the services, the display topic and the home/local-coordinate round trip. Both pass in the WSL2 environment. Note that the local coordinates are only meaningful after `ResetHome` has set the home waypoint; before that, home is the Earth's centre and `local_x/local_y` are millions of metres.
+
 ## Two GPS paths
 
 `NAVnode` opens the GNSS receiver itself (parameters `gnss_port` default `/dev/ttyUSB0`, `gnss_baudrate` default 38400) and parses NMEA internally. `gps_bridge_node` independently opens the same default port and publishes `/gps/fix`. Run only one at a time unless they are given different ports.

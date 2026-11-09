@@ -45,10 +45,10 @@ Create `%USERPROFILE%\.wslconfig` before the first heavy run:
 [wsl2]
 memory=10GB
 processors=8
-networkingMode=mirrored
+networkingMode=nat
 ```
 
-`mirrored` makes WSL2 share the host's network addresses, which is what lets DDS discovery and LAN peers (the Jetson) work without NAT tricks **[background]**. Then inside Ubuntu: install ROS 2 Humble from the official apt repository, clone the repository **inside the Linux file system** (not under `/mnt/d`, which is slow for builds), and follow [build-and-run.md](../build-and-run.md). USB devices need `usbipd-win`; CAN, GPIO and anything real-time stay on the Jetson **[background]**.
+**Use `nat`, not `mirrored`.** Mirrored mode (WSL2 shares the PC's network addresses) was tried first and **broke local ROS 2 discovery on this PC**: two ROS processes in the same distro could not see each other with FastDDS (default, UDP-only and the repository profile) or CycloneDDS, even though plain UDP and raw multicast worked. Under `nat` the same test passed immediately. The cost is that the Jetson cannot open connections back into WSL2, so live DDS between the two is one-way; use the dashboard, SSH or recorded bags instead (methods 1, 2 and 4 below). Then inside Ubuntu: install ROS 2 Humble from the official apt repository, clone the repository **inside the Linux file system** (not under `/mnt/d`, which is slow for builds), and follow [build-and-run.md](../build-and-run.md). USB devices need `usbipd-win`; CAN, GPIO and anything real-time stay on the Jetson **[background]**.
 
 ### Status of the WSL2 environment (set up 2026-11-08)
 
@@ -56,11 +56,12 @@ networkingMode=mirrored
 |---|---|
 | Distribution | Ubuntu 22.04.5 LTS, stored on the D drive at `D:\WSL\Ubuntu-22.04` (disk image `ext4.vhdx`); swap file at `D:\WSL\swap.vhdx` |
 | User | `dave`, member of `sudo` with passwordless sudo (convenient for a local dev VM; remove `/etc/sudoers.d/90-dave` to change) |
-| WSL config | `C:\Users\canad\.wslconfig`: 10 GB memory, 8 processors, mirrored networking (the distro sees the PC's LAN address) |
+| WSL config | `C:\Users\canad\.wslconfig`: 10 GB memory, 8 processors, NAT networking (mirrored mode broke local DDS discovery, see above) |
 | ROS | ROS 2 Humble `ros-base`, `ros-dev-tools`, colcon, rosdep, plus the packages the workspace uses (rosbridge, cv_bridge, xacro, robot_state_publisher, tf2, OpenCV, NumPy/SciPy/pyserial). Gazebo, RViz and Isaac ROS are **not** installed yet, on purpose |
 | Repository | Cloned inside the Linux file system at `~/D.A.V.E` (not under `/mnt/d`); update it with `git pull` from the Windows repository path |
-| Workspace build | `colcon build --symlink-install`: **15 of 16 packages build**. `navigation_system` fails only because `raylib` is not installed (its CMake requires it for `NAVnode` and `NAVDisplay`) |
-| Not done | raylib (a build from source was held for approval), Gazebo, RViz, `pykalman`/`Jetson.GPIO`/Adafruit libraries (runtime only), any hardware access |
+| Workspace build | `colcon build --symlink-install`: **all 16 packages build**. `navigation_system` needs `raylib`, installed from source (v5.0, static) into `~/opt/raylib` with no system-wide install; configure with `PKG_CONFIG_PATH=$HOME/opt/raylib/lib/pkgconfig` and `-Draylib_DIR=$HOME/opt/raylib/lib/cmake/raylib -Draylib_USE_STATIC_LIBS=ON` |
+| Runtime test | `scripts/tests/navnode_nmea_smoke_test.sh` passes: `NAVnode` parses a simulated NMEA sentence from a virtual serial port, all expected services exist, `NAVDisplayInfo` is published, and after `ResetHome` at the same position the local position is within about 0.25 m of zero |
+| Not done | Gazebo, RViz, `pykalman`/`Jetson.GPIO`/Adafruit libraries (runtime only), any hardware access, any other node run end to end |
 
 The build also surfaced a real bug (`SerialPort::write` length), fixed and recorded in [known-issues.md](../known-issues.md).
 
@@ -68,7 +69,7 @@ The build also surfaced a real bug (`SerialPort::write` length), fixed and recor
 
 1. **Browser dashboard / rosbridge.** Needs no ROS on the laptop: open `http://<jetson>:8000`. Already works ([dashboard-and-network.md](../dashboard-and-network.md)).
 2. **SSH plus the ROS command line.** `ssh` to the Jetson and run `ros2 topic hz`, `ros2 node list`, `ros2 bag record` there; copy bags to the laptop for analysis. Lowest risk.
-3. **Direct DDS from WSL2.** Add the laptop's address to the Jetson's static peer list in [`fastdds_profiles.xml`](../../fastdds_profiles.xml) (the profile uses unicast peers, not multicast) and use the same `ROS_DOMAIN_ID`. Gives live RViz of the Jetson's topics. Large point clouds over Wi-Fi will lag; subscribe to downsampled or compressed topics.
+3. **Direct DDS from WSL2** (not available under NAT; needs mirrored mode, which broke local discovery here, or a VPN-style bridge). Add the laptop's address to the Jetson's static peer list in [`fastdds_profiles.xml`](../../fastdds_profiles.xml) (the profile uses unicast peers, not multicast) and use the same `ROS_DOMAIN_ID`. Gives live RViz of the Jetson's topics. Large point clouds over Wi-Fi will lag; subscribe to downsampled or compressed topics.
 4. **Record on the rover, analyse offline.** Best for SLAM work: [`record_bag.sh`](../../scripts/slam/record_bag.sh), copy the bag, replay in WSL2.
 
 ### Does a Raspberry Pi in the middle help?
