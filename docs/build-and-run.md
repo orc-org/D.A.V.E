@@ -26,6 +26,10 @@ colcon build --packages-select serial_interfaces navigation_interfaces arm_inter
 colcon build --symlink-install
 ```
 
+### Verified build status (WSL2, Ubuntu 22.04, Humble)
+
+15 of 16 packages build with the commands above. `navigation_system` needs `raylib`, which is not in the ROS dependencies and was not installed in the WSL2 environment; install it (for example from source) before building that package, or build with `--packages-skip navigation_system`. See [slam/decisions.md](slam/decisions.md#status-of-the-wsl2-environment-set-up-2026-11-08).
+
 ## One-command launchers
 
 ```bash

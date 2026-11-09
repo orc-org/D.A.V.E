@@ -50,6 +50,20 @@ networkingMode=mirrored
 
 `mirrored` makes WSL2 share the host's network addresses, which is what lets DDS discovery and LAN peers (the Jetson) work without NAT tricks **[background]**. Then inside Ubuntu: install ROS 2 Humble from the official apt repository, clone the repository **inside the Linux file system** (not under `/mnt/d`, which is slow for builds), and follow [build-and-run.md](../build-and-run.md). USB devices need `usbipd-win`; CAN, GPIO and anything real-time stay on the Jetson **[background]**.
 
+### Status of the WSL2 environment (set up 2026-11-08)
+
+| Item | State |
+|---|---|
+| Distribution | Ubuntu 22.04.5 LTS, stored on the D drive at `D:\WSL\Ubuntu-22.04` (disk image `ext4.vhdx`); swap file at `D:\WSL\swap.vhdx` |
+| User | `dave`, member of `sudo` with passwordless sudo (convenient for a local dev VM; remove `/etc/sudoers.d/90-dave` to change) |
+| WSL config | `C:\Users\canad\.wslconfig`: 10 GB memory, 8 processors, mirrored networking (the distro sees the PC's LAN address) |
+| ROS | ROS 2 Humble `ros-base`, `ros-dev-tools`, colcon, rosdep, plus the packages the workspace uses (rosbridge, cv_bridge, xacro, robot_state_publisher, tf2, OpenCV, NumPy/SciPy/pyserial). Gazebo, RViz and Isaac ROS are **not** installed yet, on purpose |
+| Repository | Cloned inside the Linux file system at `~/D.A.V.E` (not under `/mnt/d`); update it with `git pull` from the Windows repository path |
+| Workspace build | `colcon build --symlink-install`: **15 of 16 packages build**. `navigation_system` fails only because `raylib` is not installed (its CMake requires it for `NAVnode` and `NAVDisplay`) |
+| Not done | raylib (a build from source was held for approval), Gazebo, RViz, `pykalman`/`Jetson.GPIO`/Adafruit libraries (runtime only), any hardware access |
+
+The build also surfaced a real bug (`SerialPort::write` length), fixed and recorded in [known-issues.md](../known-issues.md).
+
 ### Reaching the Jetson from WSL2 (best to worst)
 
 1. **Browser dashboard / rosbridge.** Needs no ROS on the laptop: open `http://<jetson>:8000`. Already works ([dashboard-and-network.md](../dashboard-and-network.md)).

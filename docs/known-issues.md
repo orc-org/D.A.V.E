@@ -16,6 +16,7 @@ Three groups: what was fixed while consolidating the repository, what is still o
 | `NAVnode` | Two services registered as `SelectRoute`, so the second never worked; `NAVDisplay` called `SelectRouteToFollow` which did not exist | Services are `SelectRouteToFollow` and `SelectRouteToEdit` |
 | `NAVnode`/`NAVDisplay` | `NAVnode` published `NAVDisplayInfo` but `NAVDisplay` subscribed to `DisplayInfo`, so the map never received data | Display subscribes to `NAVDisplayInfo` |
 | `NAVnode` | Collision-handling bugs from `navnode_fix`: array freed with `delete`, null dereferences, divide-by-zero, wrong vector in a detour offset, `previous` vs `nextNode` mix-up; remove-waypoint services edited the wrong route; "last five waypoints" aliased one object | Ported from `navnode_fix` and applied |
+| `serial_communication` | `SerialPort::write(char*)` passed `sizeof(message)` (the pointer size, 8 bytes) as the length, so every serial message (XLR link, Morse bridge) was truncated to 8 bytes or padded with whatever followed it in memory. Found by the compiler warning in the first WSL2 build | `strlen(message)`, with a null check and error report |
 | `rover_ekf` | Wheel speed was twice the four-wheel mean | `× 0.25` |
 | `rover_ekf` | Yaw-rate update fed the state's own heading back as a measurement (zero innovation, shrinking covariance) | Updates yaw rate only |
 | IMU launch | Filter used `dt = 0.1` while telemetry publishes at 20 Hz | Launch sets `dt = 1 / publish_rate` |
