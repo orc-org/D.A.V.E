@@ -34,6 +34,8 @@ Which file does what in the SLAM program. **Exists** means it is in the reposito
 | [`scripts/slam/slam.repos`](../../scripts/slam/slam.repos) | Candidate external repositories |
 | [`scripts/slam/README.md`](../../scripts/slam/README.md) | How the scripts fit together |
 
+Environment, tool choices and the research-tier/rover-tier split are recorded in [decisions.md](decisions.md); that page also lists the planned launch profiles (`competition`, `research`).
+
 ## Planned code (does not exist yet)
 
 Names are proposals. Create the package only when its first node exists, so that `colcon build` in `ros2_ws` keeps working.

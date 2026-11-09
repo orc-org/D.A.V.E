@@ -86,6 +86,8 @@ Ratings are for *our* needs: a wheeled outdoor rover, a 3-D LiDAR and a depth ca
 3. **Use real bags as the evidence for SLAM claims.**
 4. **Add MuJoCo or Isaac Sim only for a specific need:** MuJoCo for fast contact/control experiments, Isaac Sim if photorealistic synthetic data on a desktop GPU becomes valuable. Treat a deformable-terrain simulator as a research tool for the stretch goal, not as part of the rover stack.
 
+Setting up WSL2, reaching the Jetson from it, and whether a Raspberry Pi helps are covered in [slam/decisions.md](slam/decisions.md#1-development-and-diagnosis-environment).
+
 ## Where to look next
 
 - The package layout and topics: [architecture.md](architecture.md).

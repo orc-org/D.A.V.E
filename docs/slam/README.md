@@ -17,6 +17,7 @@ This folder is the working record of that program: what was researched, what was
 | 1 | [platform.md](platform.md) | What the Jetson and the Unitree sensors can and cannot do, and integration problems found on paper |
 | 2 | [literature.md](literature.md) | Every topic on the original list, what it really is, and whether it belongs on a rover |
 | 3 | [architecture.md](architecture.md) | The proposed three-layer design, frames, topics, compute budget |
+| 3b | [decisions.md](decisions.md) | Development environment (WSL2, Jetson, optional Pi), the tool chosen for each slot, and the two-tier research/rover strategy |
 | 4 | [research-plan.md](research-plan.md) | Experiments, metrics, decision gates, risks, and the novelty claim |
 | 5 | [code-map.md](code-map.md) | Concept → file map: existing code to reuse, new code to write, scripts, config |
 | 6 | [sources.md](sources.md) | Every link used, grouped, with how it was read |
