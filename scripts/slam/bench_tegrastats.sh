@@ -17,6 +17,10 @@ SECONDS_TO_RUN="${2:-0}"
 BENCH_DIR="${BENCH_DIR:-$HOME/bench}"
 INTERVAL_MS="${INTERVAL_MS:-1000}"
 
+case "$SECONDS_TO_RUN" in
+    ''|*[!0-9]*) echo "seconds must be a non-negative integer, got: $SECONDS_TO_RUN" >&2; exit 2 ;;
+esac
+
 if ! command -v tegrastats >/dev/null 2>&1; then
     echo "tegrastats not found: this script only runs on a Jetson" >&2
     exit 1

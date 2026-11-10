@@ -23,6 +23,11 @@ show_help() {
 while [[ $# -gt 0 ]]; do
     case "$1" in
         -p|--port)
+            # without this check "-p" as the last argument made 'shift 2' fail and the loop spin forever
+            if [[ $# -lt 2 || ! "$2" =~ ^[0-9]+$ ]]; then
+                echo "Option $1 needs a numeric port"
+                exit 1
+            fi
             PORT="$2"
             shift 2
             ;;

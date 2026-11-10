@@ -3,28 +3,29 @@ import serial
 PORT = '/dev/ttyUSB0'
 BAUD = 38400
 
+ser = None
 try:
     print(f"Opening {PORT} at {BAUD} baud...")
     # open the serial port with a 1-second timeout
     ser = serial.Serial(PORT, BAUD, timeout=1)
-    
+
     print("Listening for NMEA data... (Press Ctrl+C to stop)\n")
     print("-" * 50)
-    
+
     while True:
-        if ser.in_waiting > 0:
-            # read a line, decode it, and strip trailing newlines
-            line = ser.readline().decode('ascii', errors='replace').strip()
-            
-            # highlight the sentences containing location coordinates
-            if line.startswith('$GNGGA') or line.startswith('$GPGGA'):
-                print(f"FIX DATA: {line}")
-            elif line.startswith('$GNRMC') or line.startswith('$GPRMC'):
-                print(f"NAV DATA: {line}")
-            elif line:
-                # print other satellite info normally
-                print(f"   {line}")
-                
+        # readline() blocks for up to the timeout, so this loop does not spin the CPU
+        # (the earlier "if ser.in_waiting > 0" polling loop kept one core at 100%).
+        line = ser.readline().decode('ascii', errors='replace').strip()
+
+        # highlight the sentences containing location coordinates
+        if line.startswith('$GNGGA') or line.startswith('$GPGGA'):
+            print(f"FIX DATA: {line}")
+        elif line.startswith('$GNRMC') or line.startswith('$GPRMC'):
+            print(f"NAV DATA: {line}")
+        elif line:
+            # print other satellite info normally
+            print(f"   {line}")
+
 except serial.SerialException as e:
     print(f"\nSerial Error: {e}")
     print("If you got a 'Permission denied' error, run the script with 'sudo',")
@@ -32,6 +33,6 @@ except serial.SerialException as e:
 except KeyboardInterrupt:
     print("\nTest stopped by user.")
 finally:
-    if 'ser' in locals() and ser.is_open:
+    if ser is not None and ser.is_open:
         ser.close()
         print("Serial port closed.")

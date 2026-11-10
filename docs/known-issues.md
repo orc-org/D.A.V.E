@@ -30,6 +30,17 @@ Three groups: what was fixed while consolidating the repository, what is still o
 | `drive_node` | Brought in `/control_mode` and `/sensitivity` handling from the web branches; the original branch defaulted to 0.5 power | Default 1.0 (full power) so behaviour is unchanged until something publishes `/sensitivity` |
 | Repo | Shell scripts checked out with CRLF line endings would not run on Linux | `.gitattributes` forces LF for scripts and source |
 | README | Out-of-date pinout and a typo in the Morse command | Rewritten to match the code |
+| `receive_stream.sh` | `-p` as the last argument (or a non-number) made `shift 2` fail, so the option loop spun forever | Argument checked, exits with an error |
+| `video_streamer.py` | `--autofocus-on-start` never worked: the focus motor is initialised lazily on the first frame, but the start-up trigger checked `has_focus_motor` before that | `trigger_sweep` initialises the motor first |
+| `test_dm556y_steppers.py` | Default frequency 200000 Hz while the comment and RPM figure say 20 kHz (10× too fast for a bring-up test) | 20000 Hz; pin-number comments no longer contradict the constants |
+| `test_gps.py` | Polled `in_waiting` in a loop with no sleep (100 % of a core) | Blocks in `readline()` |
+| `test_imu_bus.py` | Said "Bus 7" regardless of what it opened and only proved the chip answered | Reads five samples; message no longer claims a bus |
+| `reset_arm_stepper_gpios.py` | Claimed the pins were "forced LOW" at the end, but `GPIO.cleanup()` releases them (floating) | Message says what it does |
+| `launch_cam0_60fps.sh` | Hard-coded `/home/orc/D.A.V.E./…` path and IP | Path relative to the script; `HOST`/`PORT` environment overrides; made executable |
+| `start_dashboard_system.sh` | Unquoted `pkill -f python.*http.server` (the shell could expand the glob) | Quoted |
+| `bench_tegrastats.sh` | A non-numeric duration crashed with a shell error | Validated |
+| `navnode_nmea_smoke_test.sh` | Fixed `sleep`s; NAVnode could outlive the test (SIGTERM to the `ros2 run` wrapper); track log written into whatever directory the test was started from | Polls for readiness, SIGINT plus a leftover check, runs in a temp directory; `captainsLogs/` git-ignored |
+| Docs | `slam/architecture.md` gave the Unitree driver's frames as `lidar_link`/`lidar_imu_link` (those are the canonical names); the SDK uses `unilidar_lidar`/`unilidar_imu` | Corrected |
 
 ## 2. Open — needs measurement or a team decision
 
@@ -45,7 +56,17 @@ Three groups: what was fixed while consolidating the repository, what is still o
 10. **Shared serial ports.** `gps_bridge_node`, `NAVnode` and `morse_bridge_node` all default to `/dev/ttyUSB0`. Assign stable device names.
 11. **Licences.** The repository is MIT. Several packages still declare Apache-2.0 and many maintainer emails are placeholders (`@todo.todo`, `@example.com`). Decide on one licence.
 12. **Dashboard needs the internet** (CDN scripts, map tiles) and rosbridge is unauthenticated.
-13. **Removed as deprecated by the cleanup branch:** `GPSnode.cpp` (an older 840-line GPS node, superseded by `gps_bridge_node.py` and the serial code in `NAVnode`), `vesc_driver_node.cpp` (serial VESC driver), `stepper_driver_node.cpp`, `py_node.py`, `module_to_import.py`, `battery_monitor_node.py`, and the committed `jetson_morse` binary and `.dtbo` files. They are in git history if needed.
+13. **Script findings left open** (need the hardware or a design decision):
+    - `test_dm556y_steppers.py` drives pins 15 (STEP) and 13 (DIR); its docstring says 15 and 7, the arm node uses 33/18 and the gripper 32/13. Confirm the wiring before running it.
+    - `NAVnode` writes `captains log <date>.txt` into `src/navigation_system/captainsLogs` **relative to the current directory**, so the location depends on where the node was started.
+    - `morse_recorder.py` assumes the first pulse is a dot and judges every later pulse against the shortest seen, so a message that starts with a dash decodes wrongly; it also times pulses with `time.time()` (wall clock, not monotonic), reads and writes its buffer from two threads without a lock, and calls `cv2.imshow` from the capture thread.
+    - `video_streamer.py` parses `sys.argv` directly, so `ros2 run … --ros-args` fails argument parsing; `--width`/`--height` are strings.
+    - `receive_stream.sh` builds its pipeline as a string and runs it with `eval`; `receive_stream.bat` exits with code 0 on an unknown option.
+    - `sim_drive_bridge.py` multiplies `/cmd_vel` by `max_linear_speed`/`max_angular_speed`, which is right only because this repository treats `/cmd_vel` as normalised (−1…1, as `drive_node` does), not as m/s.
+    - `start_sim_system.sh` / `start_dashboard_system.sh` write logs to fixed `/tmp` files and do not stop `rosapi`.
+    - `pyflakes` also reports unused imports/variables in several nodes (`kalman_filter.py`, `telemetry.py`, `arm_stepper_*_driver_node.py`, `motion_coordinator_node.py`, `input_viewer.py`, `gps_bridge_node.py`); none affect behaviour.
+    - `dashboard/app.js` was not linted (no Node.js in the environment).
+14. **Removed as deprecated by the cleanup branch:** `GPSnode.cpp` (an older 840-line GPS node, superseded by `gps_bridge_node.py` and the serial code in `NAVnode`), `vesc_driver_node.cpp` (serial VESC driver), `stepper_driver_node.cpp`, `py_node.py`, `module_to_import.py`, `battery_monitor_node.py`, and the committed `jetson_morse` binary and `.dtbo` files. They are in git history if needed.
 
 ## 3. Incomplete by design
 

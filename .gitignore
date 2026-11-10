@@ -53,3 +53,6 @@ bags/
 *.db3.zstd
 *.mcap
 bench/
+
+# NAVnode track logs (written relative to the current directory)
+captainsLogs/

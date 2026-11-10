@@ -33,7 +33,7 @@ The code is written against these canonical topics. A launch file remaps whateve
 | Canonical topic | Type | Required? | Notes |
 |---|---|---|---|
 | `/lidar/points` | `sensor_msgs/PointCloud2` | yes | Per-point timestamps preferred for deskewing; frame `lidar_link` |
-| `/lidar/imu` | `sensor_msgs/Imu` | yes (LiDAR odometry) | Unitree: `unilidar/imu`; frame `lidar_imu_link` |
+| `/lidar/imu` | `sensor_msgs/Imu` | yes (LiDAR odometry) | Unitree: `unilidar/imu`, frame `unilidar_imu`; canonical frame `lidar_imu_link` |
 | `/camera/color/image` | `sensor_msgs/Image` | optional | Used by the Gaussian layer and for classification |
 | `/camera/color/camera_info` | `sensor_msgs/CameraInfo` | with colour | Intrinsics and distortion |
 | `/camera/depth/image` | `sensor_msgs/Image` (32FC1 metres or 16UC1 mm) | optional | Aligned to colour if possible; otherwise a separate `camera_info` |
@@ -51,7 +51,7 @@ All consumers must also run with the camera absent: Layer 1 needs only the LiDAR
 
 ## Layer 1 — LiDAR-inertial odometry
 
-- **Input:** `unilidar/cloud` and `unilidar/imu` from the driver ([platform.md](platform.md#software-support)). The Unitree driver names its frames `lidar_link` and `lidar_imu_link`; the launch file maps them to the canonical `lidar_link` and `lidar_imu_link` (with the SDK's fixed IMU offset) so other LiDARs can be swapped in.
+- **Input:** `unilidar/cloud` and `unilidar/imu` from the driver ([platform.md](platform.md#software-support)). The Unitree driver names its frames `unilidar_lidar` and `unilidar_imu` ([platform.md](platform.md#software-support)); the launch file maps them to the canonical `lidar_link` and `lidar_imu_link` (with the SDK's fixed IMU offset) so other LiDARs can be swapped in.
 - **Candidates** (decided by the bench-off in [research-plan.md](research-plan.md#e1--odometry-bench-off)): Point-LIO ROS 2 port with Unitree support; FAST-LIO2 ROS 2 ports; DLIO; KISS-ICP (LiDAR only); GLIM **[S]**. All run on the CPU; the GPU stays free for Layer 3.
 - **Output:** `nav_msgs/Odometry` with covariance; the deskewed cloud in the sensor frame; **no TF**. The LIO node must not publish `odom → base_link`; `rover_ekf` owns that transform (see [Frames](#frames-and-calibration)).
 - **Dynamic points:** the arm, the mast and people must not enter the map. Mask a configurable body-shaped region in the sensor frame (the arm's reach comes from `physical_params.yaml`) and reject points with large temporal inconsistency **[I]**.
