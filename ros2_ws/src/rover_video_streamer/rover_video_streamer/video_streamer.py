@@ -40,6 +40,7 @@ class VideoStreamer:
         self.i2c_address = 0x0c
         
         self.autofocus_in_progress = False
+        self._af_lock = threading.Lock()
         self.last_frame_sharpness = 0.0
         self.focus_motor_initialized = False
         self.has_focus_motor = False
@@ -114,16 +115,19 @@ class VideoStreamer:
         if not self.has_focus_motor:
             print("[Autofocus] WARNING: No focus motor detected over I2C. Focus sweep aborted.")
             return False
-        if self.autofocus_in_progress:
-            print("[Autofocus] Focus sweep already in progress.")
-            return False
-        
-        threading.Thread(target=self._autofocus_sweep_thread).start()
+        # The flag used to be set inside the sweep thread, so two triggers arriving together
+        # (UDP + ROS service) could both start a sweep. Claim it under a lock instead.
+        with self._af_lock:
+            if self.autofocus_in_progress:
+                print("[Autofocus] Focus sweep already in progress.")
+                return False
+            self.autofocus_in_progress = True
+
+        threading.Thread(target=self._autofocus_sweep_thread, daemon=True).start()
         return True
 
     def _autofocus_sweep_thread(self):
         """Sweeps focus values and sets focus to the sharpest point without stopping the feed."""
-        self.autofocus_in_progress = True
         print("[Autofocus] Starting on-the-fly focus sweep...")
         
         focus_min = 100
@@ -424,7 +428,8 @@ def main(args=None):
     parser.add_argument('--secondary-port', type=int, default=5001, help='Secondary UDP port (127.0.0.1) for local nodes like morse_recorder (set to 0 to disable)')
 
     # resolve arguments
-    parsed_args = parser.parse_args(args=args if args is not None else sys.argv[1:])
+    # parse_known_args: `ros2 run ... --ros-args -r ...` adds ROS arguments that argparse would reject
+    parsed_args, _unknown = parser.parse_known_args(args=args if args is not None else sys.argv[1:])
 
     # resolve sensor-id for i2c bus mapping robustly
     sensor_id = 0

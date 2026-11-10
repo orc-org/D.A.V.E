@@ -16,6 +16,7 @@ Each page was written from the source, not from the old per-package READMEs, whi
 | [dashboard-and-network.md](dashboard-and-network.md) | rosbridge, the process manager, the web dashboard, DDS configuration |
 | [build-and-run.md](build-and-run.md) | Dependencies, building, launch scripts, simulation |
 | [known-issues.md](known-issues.md) | Limitations, open questions for the hardware team, and the SLAM gap |
+| [competition.md](competition.md) | CIRC 2027 tasks and rules, and the capability each one demands of the rover and code |
 | [ros-and-simulation.md](ros-and-simulation.md) | What ROS 2 is, whether Linux is required, its limitations, and how it compares with MuJoCo, Gazebo, Isaac Sim and other simulators |
 | [slam/README.md](slam/README.md) | **SLAM and perception program**: platform research (Jetson Orin Nano Super, Unitree L2), literature review, proposed architecture, research plan, code map, sources |
 

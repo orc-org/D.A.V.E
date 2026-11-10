@@ -42,7 +42,12 @@ META="$BENCH_DIR/${LABEL}_${STAMP}.meta"
 # tegrastats --logfile writes in the background; stop it when we exit.
 tegrastats --interval "$INTERVAL_MS" --logfile "$LOG" &
 TS_PID=$!
-trap 'kill "$TS_PID" 2>/dev/null || true; echo "log: $LOG"' EXIT INT TERM
+trap 'kill "$TS_PID" 2>/dev/null || true; echo "log: $LOG"; [ -s "$LOG" ] || echo "WARNING: log is empty (tegrastats may need sudo on this JetPack)" >&2' EXIT INT TERM
+
+# Failure point: tegrastats exits at once when it lacks permission, which would leave an
+# empty log while the experiment runs unmonitored.
+sleep 2
+kill -0 "$TS_PID" 2>/dev/null || { echo "tegrastats exited immediately; try running this script with sudo" >&2; exit 1; }
 
 echo "logging every ${INTERVAL_MS} ms to $LOG"
 if [ "$SECONDS_TO_RUN" -gt 0 ]; then

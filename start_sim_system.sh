@@ -61,6 +61,16 @@ echo "launching modern gazebo (ros_gz), rviz, and drive subsystem..."
 ros2 launch rover_description sim.launch.py > /tmp/gazebo_sim.log 2>&1 &
 SIM_PID=$!
 
+# report children that died during start-up instead of claiming success
+sleep 3
+for pair in "rosbridge:$ROSBRIDGE_PID:/tmp/rosbridge_sim.log" "dashboard helper:$HELPER_PID:/tmp/dashboard_helper.log" "web server:$WEB_PID:/tmp/webserver_sim.log" "gazebo launch:$SIM_PID:/tmp/gazebo_sim.log"; do
+    IFS=: read -r pname ppid plog <<< "$pair"
+    if ! kill -0 "$ppid" 2>/dev/null; then
+        echo "warning: $pname exited during start-up; last log lines ($plog):"
+        tail -n 5 "$plog" 2>/dev/null
+    fi
+done
+
 echo "all systems started"
 echo "dashboard: http://localhost:8000"
 echo "press ctrl+c to stop"

@@ -78,6 +78,13 @@ def main():
         except ValueError:
             pass
 
+    # A mistyped argument (the old default was already 10x too high) would stall a loaded stepper
+    # or run an arm into its stops, so refuse implausible values unless explicitly forced.
+    MAX_SAFE_HZ = 25000
+    if target_freq <= 0 or (target_freq > MAX_SAFE_HZ and '--force' not in sys.argv):
+        print(f"Refusing {target_freq} Hz: use 1..{MAX_SAFE_HZ} Hz, or add --force to override.")
+        sys.exit(2)
+
     print(f"Target Max Frequency: {target_freq} Hz ({target_freq/1000:.1f} kHz)")
 
     try:

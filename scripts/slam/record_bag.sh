@@ -6,6 +6,8 @@
 #          LIDAR_TOPICS   space-separated lidar topics (default: /unilidar/cloud /unilidar/imu)
 #          CAMERA_TOPICS  space-separated image topics (default: none; set e.g. "/image_raw /camera_info")
 #          EXTRA_TOPICS   anything else to record
+#          MIN_FREE_GB    refuse to start below this much free disk (default 20)
+#          BAG_SPLIT_BYTES  split the bag at this size (default 4000000000)
 #
 # Records the lidar, IMU, GNSS, wheel commands, TF and the existing rover estimates so
 # that every odometry/mapping candidate can be replayed offline on identical data
@@ -32,6 +34,23 @@ if ! command -v ros2 >/dev/null 2>&1; then
 fi
 
 mkdir -p "$BAG_DIR"
+
+# Failure point: point clouds fill a disk quickly and a full disk silently truncates the bag.
+# Refuse to start with less than MIN_FREE_GB free (default 20).
+MIN_FREE_GB="${MIN_FREE_GB:-20}"
+FREE_GB=$(df -Pk "$BAG_DIR" | awk 'NR==2 {print int($4/1048576)}')
+if [ "${FREE_GB:-0}" -lt "$MIN_FREE_GB" ]; then
+    echo "only ${FREE_GB:-0} GB free in $BAG_DIR (need MIN_FREE_GB=$MIN_FREE_GB); free space or set BAG_DIR/MIN_FREE_GB" >&2
+    exit 1
+fi
+
+# Failure point: `ros2 bag record` happily records a topic that nobody publishes, so a driver that
+# failed to start gives an empty bag that is only noticed hours later. Warn about missing topics.
+LIVE="$(timeout 10 ros2 topic list 2>/dev/null || true)"
+for t in $LIDAR_TOPICS $CAMERA_TOPICS; do
+    echo "$LIVE" | grep -qx "$t" || echo "WARNING: $t is not being published right now" >&2
+done
+
 OUT="$BAG_DIR/$NAME"
 if [ -e "$OUT" ]; then
     echo "refusing to overwrite existing bag: $OUT" >&2
@@ -51,6 +70,7 @@ mkdir -p "$OUT.meta"
 
 echo "Recording to $OUT (Ctrl-C to stop)"
 # shellcheck disable=SC2086
-exec ros2 bag record -o "$OUT" \
+# Split files (default 4 GB) so a crash or power loss only damages the last piece.
+exec ros2 bag record -o "$OUT" --max-bag-size "${BAG_SPLIT_BYTES:-4000000000}" \
     --compression-mode file --compression-format zstd \
     $LIDAR_TOPICS $CAMERA_TOPICS $ROVER_TOPICS $EXTRA_TOPICS

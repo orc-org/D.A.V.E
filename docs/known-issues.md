@@ -40,6 +40,12 @@ Three groups: what was fixed while consolidating the repository, what is still o
 | `start_dashboard_system.sh` | Unquoted `pkill -f python.*http.server` (the shell could expand the glob) | Quoted |
 | `bench_tegrastats.sh` | A non-numeric duration crashed with a shell error | Validated |
 | `navnode_nmea_smoke_test.sh` | Fixed `sleep`s; NAVnode could outlive the test (SIGTERM to the `ros2 run` wrapper); track log written into whatever directory the test was started from | Polls for readiness, SIGINT plus a leftover check, runs in a temp directory; `captainsLogs/` git-ignored |
+| Failure points (effectiveness pass) | `record_bag.sh` could fill the disk, record nothing without a warning, and lose the whole bag on a crash | Refuses below `MIN_FREE_GB`, warns about unpublished topics, splits at 4 GB |
+| | `bench_tegrastats.sh` left an empty log if `tegrastats` lacked permission | Checks the process is alive after 2 s and warns on an empty log |
+| | `start_dashboard_system.sh` / `start_sim_system.sh` printed success even if a server failed to bind or died | Port-in-use check (dashboard) and a 3 s liveness check that prints the log tail |
+| | `receive_stream.sh` built its pipeline as a string and ran it through `eval` | Argument array, checks `gst-launch-1.0` exists |
+| | `video_streamer.py` rejected `--ros-args`; two simultaneous focus triggers could start two sweeps | `parse_known_args`; the in-progress flag is claimed under a lock |
+| | `test_dm556y_steppers.py` accepted any frequency | Refuses above 25 kHz unless `--force` |
 | Docs | `slam/architecture.md` gave the Unitree driver's frames as `lidar_link`/`lidar_imu_link` (those are the canonical names); the SDK uses `unilidar_lidar`/`unilidar_imu` | Corrected |
 
 ## 2. Open — needs measurement or a team decision
@@ -61,9 +67,9 @@ Three groups: what was fixed while consolidating the repository, what is still o
     - `NAVnode` writes `captains log <date>.txt` into `src/navigation_system/captainsLogs` **relative to the current directory**, so the location depends on where the node was started.
     - `morse_recorder.py` assumes the first pulse is a dot and judges every later pulse against the shortest seen, so a message that starts with a dash decodes wrongly; it also times pulses with `time.time()` (wall clock, not monotonic), reads and writes its buffer from two threads without a lock, and calls `cv2.imshow` from the capture thread.
     - `video_streamer.py` parses `sys.argv` directly, so `ros2 run … --ros-args` fails argument parsing; `--width`/`--height` are strings.
-    - `receive_stream.sh` builds its pipeline as a string and runs it with `eval`; `receive_stream.bat` exits with code 0 on an unknown option.
+    - `receive_stream.bat` exits with code 0 on an unknown option.
     - `sim_drive_bridge.py` multiplies `/cmd_vel` by `max_linear_speed`/`max_angular_speed`, which is right only because this repository treats `/cmd_vel` as normalised (−1…1, as `drive_node` does), not as m/s.
-    - `start_sim_system.sh` / `start_dashboard_system.sh` write logs to fixed `/tmp` files and do not stop `rosapi`.
+    - `start_sim_system.sh` / `start_dashboard_system.sh` write logs to fixed `/tmp` files and do not stop `rosapi`; the sim script only warns about dead children.
     - `pyflakes` also reports unused imports/variables in several nodes (`kalman_filter.py`, `telemetry.py`, `arm_stepper_*_driver_node.py`, `motion_coordinator_node.py`, `input_viewer.py`, `gps_bridge_node.py`); none affect behaviour.
     - `dashboard/app.js` was not linted (no Node.js in the environment).
 14. **Removed as deprecated by the cleanup branch:** `GPSnode.cpp` (an older 840-line GPS node, superseded by `gps_bridge_node.py` and the serial code in `NAVnode`), `vesc_driver_node.cpp` (serial VESC driver), `stepper_driver_node.cpp`, `py_node.py`, `module_to_import.py`, `battery_monitor_node.py`, and the committed `jetson_morse` binary and `.dtbo` files. They are in git history if needed.

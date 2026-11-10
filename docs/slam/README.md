@@ -10,6 +10,8 @@ This folder is the working record of that program: what was researched, what was
 - **Compute:** Jetson Orin Nano Super Developer Kit (8 GB shared memory).
 - **Software:** ROS 2 Humble on Ubuntu 22.04 (JetPack 6.x). Why ROS 2, whether Linux is required and how it compares with MuJoCo and other simulators is in [../ros-and-simulation.md](../ros-and-simulation.md).
 
+> **Competition context:** the five CIRC 2027 tasks (one of them with GPS banned, one at night) are summarised in [../competition.md](../competition.md); they set the priorities for this program.
+
 ## Read in this order
 
 | # | Page | Read it to learn |
