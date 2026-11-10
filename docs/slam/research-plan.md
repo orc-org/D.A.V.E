@@ -64,6 +64,8 @@ Method: record several routes with [`scripts/slam/record_bag.sh`](../../scripts/
 | CPU use, RAM, output rate, latency | `tegrastats`, ROS timestamps |
 | Robustness | start-up delay, behaviour with open sky vs tall obstacles, behaviour when the arm moves |
 
+**First pipeline check (simulation only, 2026-11-09).** One loop in the simulated yard (`worlds/slam_yard.sdf`, driven by `scripts/slam/sim_drive_loop.py`, recorded with `record_bag.sh`, scored by `scripts/slam/eval_trajectory.py`) was run through KISS-ICP 1.3.0 (LiDAR only, default settings, `pip install --user kiss-icp`). Result on 493 scans: ATE RMSE 0.43 m over a 16.5 m path (max 1.4 m); length with every 10th pose 16.5 m vs 16.4 m true; height drift 0.13 m; 52 Hz and 70 MB on the development PC. The first-pass 1.59 path-length ratio was jitter, not drift: about 3.75 m of the estimated travel happened while the rover was almost still or turning in place. **This proves the record, convert, run and score pipeline works. It says nothing about the Orin Nano or real data**: the simulated cloud has no noise model validated against the L2, no motion distortion and only 16 rings. The other candidates, IMU use and the Jetson timing are still untested. The open-loop drive did not close its loop (2.5 m end gap), so the loop-closure metric needs a closed-loop controller or a longer, repeated route.
+
 Gate: pick the algorithm with the lowest drift that holds ≥ 10 Hz pose output within the Layer 1 budget. If none does, thin the cloud, lower the L2 rotation rate, or move to MAXN_SUPER and re-measure before changing hardware.
 
 ## E2 — Fusion with GNSS and wheels

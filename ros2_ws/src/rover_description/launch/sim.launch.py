@@ -83,12 +83,15 @@ def generate_launch_description():
             '/camera/image@sensor_msgs/msg/Image[ignition.msgs.Image',
             '/camera/depth_image@sensor_msgs/msg/Image[ignition.msgs.Image',
             '/camera/camera_info@sensor_msgs/msg/CameraInfo[ignition.msgs.CameraInfo',
+            # simulator ground truth: the true pose of every model (not the wheel odometry)
+            '/world/default/pose/info@tf2_msgs/msg/TFMessage[ignition.msgs.Pose_V',
         ],
         # the rgbd camera publishes colour, depth and one camera_info; the contract has separate names
         remappings=[
             ('/camera/image', '/camera/color/image'),
             ('/camera/depth_image', '/camera/depth/image'),
             ('/camera/camera_info', '/camera/color/camera_info'),
+            ('/world/default/pose/info', '/sim/ground_truth_poses'),
         ],
         output='screen'
     )

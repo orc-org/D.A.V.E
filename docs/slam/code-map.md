@@ -49,6 +49,7 @@ Names are proposals. Create the package only when its first node exists, so that
 | `ros2_ws/src/rover_slam/rover_slam/obstacle_bridge.py` | Blocked regions → `AddLocalObstacle` calls | E4 |
 | `ros2_ws/src/rover_slam/rover_slam/safety_stop.py` | Corridor point-count stop, independent of all other layers | E4 |
 | `ros2_ws/src/gaussian_terrain/` | LiDAR-seeded surfel Gaussian map and traversability (Layer 3) | E3b |
+| `scripts/slam/sim_drive_loop.py`, `ros2_ws/src/rover_description/worlds/slam_yard.sdf`, `scripts/slam/eval_trajectory.py` | Drive a loop in the simulated yard on sim time; the walled test world; score a TUM trajectory against `/sim/ground_truth_poses` (done) | E1 |
 | `ros2_ws/src/rover_description/urdf/sensors.xacro` | LiDAR link, IMU and depth camera with simulated sensors (done) | E0 |
 | `scripts/slam/eval_traj.py` | Trajectory error against RTK GNSS or loop closure | E1, E2 |
 | `scripts/slam/label_traversability.py` | Helper to label traversable ground on recorded segments | E3 |
