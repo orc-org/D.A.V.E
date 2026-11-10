@@ -23,6 +23,13 @@ pkill -f "motion_coordinator" 2>/dev/null
 pkill -f "vesc_can_driver_node" 2>/dev/null
 sleep 1
 
+# Under WSL2 the GPU OpenGL driver crashes Gazebo's ogre2 renderer (needed by the simulated
+# LiDAR and cameras), so fall back to Mesa software rendering. Slower, but it works.
+if grep -qi microsoft /proc/version 2>/dev/null; then
+    export LIBGL_ALWAYS_SOFTWARE=1
+    echo "WSL detected: using software OpenGL (LIBGL_ALWAYS_SOFTWARE=1); simulated sensor rates will be low"
+fi
+
 echo "starting d.a.v.e. modern gazebo and dashboard system..."
 
 # source ros 2 humble

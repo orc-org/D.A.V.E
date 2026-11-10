@@ -16,7 +16,7 @@ Which file does what in the SLAM program. **Exists** means it is in the reposito
 | Local ↔ geodetic maths | [`navigation_system/src/Waypoint.cpp`](../../ros2_ws/src/navigation_system/src/Waypoint.cpp), test [`scripts/tests/waypoint_conversion_test.cpp`](../../scripts/tests/waypoint_conversion_test.cpp) | Frame alignment must reuse these conversions |
 | Wheel command output | [`drive_package/src/drive_node.cpp`](../../ros2_ws/src/drive_package/src/drive_node.cpp) | Accepts `/cmd_vel` from a planner ([drive-system.md](../drive-system.md)) |
 | Motor driver | [`drive_package/src/vesc_can_driver_node.cpp`](../../ros2_ws/src/drive_package/src/vesc_can_driver_node.cpp) | No encoder feedback is published; see [known-issues](../known-issues.md) |
-| Robot model, dimensions, simulation | [`rover_description/`](../../ros2_ws/src/rover_description/README.md), [`config/physical_params.yaml`](../../ros2_ws/src/rover_description/config/physical_params.yaml), [`urdf/`](../../ros2_ws/src/rover_description/urdf/), [`launch/sim.launch.py`](../../ros2_ws/src/rover_description/launch/sim.launch.py) | Add the LiDAR link and a simulated LiDAR |
+| Robot model, dimensions, simulation | [`rover_description/`](../../ros2_ws/src/rover_description/README.md), [`config/physical_params.yaml`](../../ros2_ws/src/rover_description/config/physical_params.yaml), [`urdf/`](../../ros2_ws/src/rover_description/urdf/), [`launch/sim.launch.py`](../../ros2_ws/src/rover_description/launch/sim.launch.py) | LiDAR link, IMU and depth camera added (`urdf/sensors.xacro`, verified headless in WSL2; see [build-and-run.md](../build-and-run.md)) |
 | Process manager (start/stop nodes from the browser) | [`arm_controller/dashboard_helper_node.py`](../../ros2_ws/src/arm_controller/arm_controller/dashboard_helper_node.py) | Add an entry per SLAM node |
 | Dashboard | [`dashboard/app.js`](../../dashboard/app.js), [`dashboard/index.html`](../../dashboard/index.html) | Show map/traversability overlays and SLAM health |
 | DDS/network settings | [`fastdds_profiles.xml`](../../fastdds_profiles.xml) | Keep the LiDAR off these peers' subnet ([platform.md](platform.md#integration-problems-found-on-paper)) |
@@ -49,7 +49,7 @@ Names are proposals. Create the package only when its first node exists, so that
 | `ros2_ws/src/rover_slam/rover_slam/obstacle_bridge.py` | Blocked regions → `AddLocalObstacle` calls | E4 |
 | `ros2_ws/src/rover_slam/rover_slam/safety_stop.py` | Corridor point-count stop, independent of all other layers | E4 |
 | `ros2_ws/src/gaussian_terrain/` | LiDAR-seeded surfel Gaussian map and traversability (Layer 3) | E3b |
-| `ros2_ws/src/rover_description/urdf/lidar.xacro` | LiDAR link and a simulated sensor | E0 |
+| `ros2_ws/src/rover_description/urdf/sensors.xacro` | LiDAR link, IMU and depth camera with simulated sensors (done) | E0 |
 | `scripts/slam/eval_traj.py` | Trajectory error against RTK GNSS or loop closure | E1, E2 |
 | `scripts/slam/label_traversability.py` | Helper to label traversable ground on recorded segments | E3 |
 | `docs/slam/results/` | One page per experiment with data, plots and the decision taken | all |

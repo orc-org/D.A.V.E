@@ -57,11 +57,11 @@ networkingMode=nat
 | Distribution | Ubuntu 22.04.5 LTS, stored on the D drive at `D:\WSL\Ubuntu-22.04` (disk image `ext4.vhdx`); swap file at `D:\WSL\swap.vhdx` |
 | User | `dave`, member of `sudo` with passwordless sudo (convenient for a local dev VM; remove `/etc/sudoers.d/90-dave` to change) |
 | WSL config | `C:\Users\canad\.wslconfig`: 10 GB memory, 8 processors, NAT networking (mirrored mode broke local DDS discovery, see above) |
-| ROS | ROS 2 Humble `ros-base`, `ros-dev-tools`, colcon, rosdep, plus the packages the workspace uses (rosbridge, cv_bridge, xacro, robot_state_publisher, tf2, OpenCV, NumPy/SciPy/pyserial). Gazebo, RViz and Isaac ROS are **not** installed yet, on purpose |
+| ROS | ROS 2 Humble `ros-base`, `ros-dev-tools`, colcon, rosdep, plus the packages the workspace uses (rosbridge, cv_bridge, xacro, robot_state_publisher, tf2, OpenCV, NumPy/SciPy/pyserial). Gazebo (Fortress, via `ros-humble-ros-gz`) and RViz were installed on 2026-11-09 for the sim sensors (about 2.4 GB); Isaac ROS is **not** installed yet, on purpose |
 | Repository | Cloned inside the Linux file system at `~/D.A.V.E` (not under `/mnt/d`); update it with `git pull` from the Windows repository path |
 | Workspace build | `colcon build --symlink-install`: **all 16 packages build**. `navigation_system` needs `raylib`, installed from source (v5.0, static) into `~/opt/raylib` with no system-wide install; configure with `PKG_CONFIG_PATH=$HOME/opt/raylib/lib/pkgconfig` and `-Draylib_DIR=$HOME/opt/raylib/lib/cmake/raylib -Draylib_USE_STATIC_LIBS=ON` |
 | Runtime test | `scripts/tests/navnode_nmea_smoke_test.sh` passes: `NAVnode` parses a simulated NMEA sentence from a virtual serial port, all expected services exist, `NAVDisplayInfo` is published, and after `ResetHome` at the same position the local position is within about 0.25 m of zero |
-| Not done | Gazebo, RViz, `pykalman`/`Jetson.GPIO`/Adafruit libraries (runtime only), any hardware access, any other node run end to end |
+| Not done | RViz and the Gazebo GUI have not been run (only headless), `pykalman`/`Jetson.GPIO`/Adafruit libraries (runtime only), any hardware access, any other node run end to end |
 
 The build also surfaced a real bug (`SerialPort::write` length), fixed and recorded in [known-issues.md](../known-issues.md).
 

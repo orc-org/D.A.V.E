@@ -18,6 +18,7 @@ def generate_launch_description():
     use_drive_node = LaunchConfiguration('use_drive_node')
     use_sim_time = LaunchConfiguration('use_sim_time')
     world = LaunchConfiguration('world')
+    gz_flags = LaunchConfiguration('gz_flags')
 
     # default world path (sdf for modern gazebo)
     default_world_path = os.path.join(pkg_rover_description, 'worlds', 'empty.sdf')
@@ -34,7 +35,9 @@ def generate_launch_description():
         PythonLaunchDescriptionSource(
             os.path.join(pkg_ros_gz_sim, 'launch', 'gz_sim.launch.py')
         ),
-        launch_arguments={'gz_args': ['-r ', world]}.items()
+        # gz_flags: '-r' runs with the GUI; use '-r -s --headless-rendering' for a server-only run
+        # (no window), which is how the sensors are tested without a display
+        launch_arguments={'gz_args': [gz_flags, ' ', world]}.items()
     )
 
     # publish robot state and tf
@@ -73,8 +76,31 @@ def generate_launch_description():
             '/odom@nav_msgs/msg/Odometry[ignition.msgs.Odometry',
             '/clock@rosgraph_msgs/msg/Clock[ignition.msgs.Clock',
             '/tf@tf2_msgs/msg/TFMessage[ignition.msgs.Pose_V',
-            '/joint_states@sensor_msgs/msg/JointState[ignition.msgs.Model'
+            '/joint_states@sensor_msgs/msg/JointState[ignition.msgs.Model',
+            # simulated perception sensors (urdf/sensors.xacro), renamed to the SLAM sensor contract
+            '/lidar/points@sensor_msgs/msg/PointCloud2[ignition.msgs.PointCloudPacked',
+            '/lidar/imu@sensor_msgs/msg/Imu[ignition.msgs.IMU',
+            '/camera/image@sensor_msgs/msg/Image[ignition.msgs.Image',
+            '/camera/depth_image@sensor_msgs/msg/Image[ignition.msgs.Image',
+            '/camera/camera_info@sensor_msgs/msg/CameraInfo[ignition.msgs.CameraInfo',
         ],
+        # the rgbd camera publishes colour, depth and one camera_info; the contract has separate names
+        remappings=[
+            ('/camera/image', '/camera/color/image'),
+            ('/camera/depth_image', '/camera/depth/image'),
+            ('/camera/camera_info', '/camera/color/camera_info'),
+        ],
+        output='screen'
+    )
+
+    # the depth image shares the colour camera's intrinsics (same rgbd sensor), so the same Gazebo
+    # camera_info is bridged a second time under the depth name (avoids a topic_tools dependency)
+    depth_info_bridge = Node(
+        package='ros_gz_bridge',
+        executable='parameter_bridge',
+        name='depth_info_bridge',
+        arguments=['/camera/camera_info@sensor_msgs/msg/CameraInfo[ignition.msgs.CameraInfo'],
+        remappings=[('/camera/camera_info', '/camera/depth/camera_info')],
         output='screen'
     )
 
@@ -125,6 +151,11 @@ def generate_launch_description():
             description='Start drive_node and simulation bridge to control the rover'
         ),
         DeclareLaunchArgument(
+            'gz_flags',
+            default_value='-r',
+            description="Gazebo flags: '-r' (GUI) or '-r -s --headless-rendering' (server only)"
+        ),
+        DeclareLaunchArgument(
             'world',
             default_value=default_world_path,
             description='Path to Modern Gazebo SDF world file'
@@ -134,6 +165,7 @@ def generate_launch_description():
         robot_state_publisher,
         spawn_entity,
         ros_gz_bridge,
+        depth_info_bridge,
         rviz_node,
         drive_node,
         sim_drive_bridge

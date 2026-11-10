@@ -90,3 +90,9 @@ Pins, CAN IDs and serial ports are in [hardware.md](hardware.md). Standalone har
 ## Simulation
 
 `ros2 launch rover_description sim.launch.py` starts Gazebo, RViz, `robot_state_publisher`, the drive node and `sim_drive_bridge.py`, which re-publishes `/cmd_vel` as `/cmd_vel_sim` for the simulated skid-steer plugin. The robot model, including the arm (`rover_arm.xacro`), is parameterised from `physical_params.yaml`. See [`ros2_ws/src/rover_description/README.md`](../ros2_ws/src/rover_description/README.md).
+
+### Simulated perception sensors
+
+[`urdf/sensors.xacro`](../ros2_ws/src/rover_description/urdf/sensors.xacro) adds a LiDAR (modelled on the Unitree L2: 360 x 96 degrees, 30 m, 360 x 16 samples at 10 Hz), its IMU and a generic 640 x 480 depth camera; the numbers are in the `sensors:` block of `physical_params.yaml`. `sim.launch.py` bridges them to the SLAM sensor contract ([slam/architecture.md](slam/architecture.md)): `/lidar/points`, `/lidar/imu`, `/camera/color/image`, `/camera/depth/image` and the two `camera_info` topics. The world loads the Gazebo sensor and IMU systems ([`worlds/empty.sdf`](../ros2_ws/src/rover_description/worlds/empty.sdf)).
+
+Verified in WSL2 (headless, `ros2 launch rover_description sim.launch.py use_rviz:=false use_drive_node:=false gz_flags:="-r -s --headless-rendering"`): all six topics publish, the cloud is in `lidar_link` (360 points wide), the depth image is `32FC1`. **WSL2 caveat:** the GPU OpenGL driver crashes Gazebo's ogre2 renderer (`Ogre::UnimplementedException`), so Mesa software rendering is required (`export LIBGL_ALWAYS_SOFTWARE=1`; `start_sim_system.sh` does this automatically under WSL). It works but is slow: measured about 3.9 Hz for the LiDAR (10 Hz requested), 55 Hz for the IMU (200 Hz) and 4-6 Hz for the cameras, so treat the simulation as a functional test, not a timing test. The sensor models have no calibrated noise or motion distortion, and the GUI and RViz were not run.
