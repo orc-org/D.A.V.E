@@ -42,7 +42,7 @@ public:
         TODO: Also pass the new fucntion binding
     */
     void ChangeButtonFunction(Texture2D &icon, Texture2D &illuminatedIcon); 
-    void Draw(); 
+    void Draw() const; 
     void Update(float dt); 
 
 };

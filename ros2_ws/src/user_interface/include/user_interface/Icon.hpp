@@ -59,7 +59,7 @@ public:
                         std::string label, Vector2 labelPosition, int fontSize = 15, Color hue = WHITE);
 
 
-    virtual void Draw();
+    virtual void Draw() const;
     virtual void Update(float dt);
 
     void TurnON();   // swtich icon state to "ILLUMINATED"

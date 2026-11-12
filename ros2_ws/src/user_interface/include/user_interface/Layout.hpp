@@ -36,7 +36,7 @@ public:
 
     void Init();
 
-    void Draw();
+    void Draw() const;
 
     void Update(float dt);
 

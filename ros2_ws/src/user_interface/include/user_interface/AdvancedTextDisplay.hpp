@@ -16,7 +16,7 @@ protected:
     
 public:
     
-    virtual void Draw();
+    virtual void Draw() const;
 
     virtual void Update(float dt);
 };

@@ -28,7 +28,7 @@ public:
 
     virtual void Init(Vector2 position, Vector2 size);
 
-    virtual void Draw();
+    virtual void Draw() const;
 
     virtual void Update(float dt);
 };

@@ -18,7 +18,7 @@ public:
 
     virtual void Init();
 
-    virtual void Draw();
+    virtual void Draw() const;
 
     virtual void Update(float dt);
 };

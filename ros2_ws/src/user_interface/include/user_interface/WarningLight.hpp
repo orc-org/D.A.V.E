@@ -38,7 +38,7 @@ public:
     void Warning();  // Set state to "WARNING"
     void Critical(); // Set state to "CRITICAL"
 
-    void Draw();
+    void Draw() const;
     void Update(float dt);
 
 };
