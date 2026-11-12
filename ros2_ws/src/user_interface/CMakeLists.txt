@@ -11,18 +11,21 @@ find_package(rclcpp REQUIRED)
 
 include(FetchContent)
 
-set(BUILD_EXAMPLES OFF)
-set(BUILD_SHARED_LIBS OFF)
-set(PLATFORM "Desktop")
-set(USE_EXTERNAL_GLFW OFF)
+find_package(raylib QUIET CONFIG)
+if(NOT raylib_FOUND)
+  set(BUILD_EXAMPLES OFF)
+  set(BUILD_SHARED_LIBS OFF)
+  set(PLATFORM "Desktop")
+  set(USE_EXTERNAL_GLFW OFF)
 
-FetchContent_Declare(
-  raylib
-  GIT_REPOSITORY https://github.com/raysan5/raylib.git
-  GIT_TAG 02566453880e06bec97f5b8160fa6fe1e98397ca
-  GIT_PROGRESS TRUE
-)
-FetchContent_MakeAvailable(raylib)
+  FetchContent_Declare(
+    raylib
+    GIT_REPOSITORY https://github.com/raysan5/raylib.git
+    GIT_TAG 02566453880e06bec97f5b8160fa6fe1e98397ca
+    GIT_PROGRESS TRUE
+  )
+  FetchContent_MakeAvailable(raylib)
+endif()
 
 FetchContent_Declare(
   raygui
@@ -31,32 +34,23 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(raygui)
 
-# Keep this here for now, but i'm not sure if this definition (creating an executable) will work 
-# with our multithreading idea
-###############################################################################################
-add_executable(LaunchNode src/LaunchNode.cpp)
-target_include_directories(LaunchNode PUBLIC
-  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
-  $<INSTALL_INTERFACE:include>
-  ${raygui_SOURCE_DIR})
-target_compile_features(LaunchNode PUBLIC c_std_99 cxx_std_17)  # Require C99 and C++17
-ament_target_dependencies(LaunchNode rclcpp)
-###############################################################################################
-
-add_executable(main src/main.cpp)
+add_executable(main
+  src/main.cpp
+  src/LaunchNode.cpp
+)
 target_include_directories(main PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
   $<INSTALL_INTERFACE:include>
   ${raygui_SOURCE_DIR})
 target_compile_features(main PUBLIC c_std_99 cxx_std_17)  # Require C99 and C++17
 target_link_libraries(main raylib)
+ament_target_dependencies(main rclcpp)
 if(TARGET raygui)
   target_link_libraries(main raygui)
 endif()
 
 install(TARGETS
   main
-  LaunchNode
   DESTINATION lib/${PROJECT_NAME})
 
 
