@@ -3,8 +3,8 @@
 
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
 
-# Ensure FastDDS uses standard multicast/localhost discovery so all 8+ sim nodes discover each other
-unset FASTRTPS_DEFAULT_PROFILES_FILE
+# FastDDS Hybrid Profile (disables broken SHM, enables local multicast for unlimited nodes + unicast antenna peers)
+export FASTRTPS_DEFAULT_PROFILES_FILE="$SCRIPT_DIR/fastdds_profiles.xml"
 
 echo "cleaning up old simulation and dashboard processes..."
 pkill -f "python3.*dashboard_helper" 2>/dev/null
