@@ -7,22 +7,28 @@ import json
 import os
 import signal
 
+def get_repo_root():
+    curr = os.path.abspath(os.path.dirname(__file__))
+    while curr and curr != os.path.dirname(curr):
+        if os.path.isdir(os.path.join(curr, ".git")) or os.path.isdir(os.path.join(curr, "ros2_ws", "src")):
+            return curr
+        curr = os.path.dirname(curr)
+    return os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../.."))
+
 class DashboardHelperNode(Node):
     def __init__(self):
         super().__init__('dashboard_helper')
         
         # define processes: key -> display_name, cmd_args, pgrep_pattern
+        repo_root = get_repo_root()
+        self.repo_root = repo_root
+        video_streamer_path = os.path.join(repo_root, "ros2_ws/src/rover_video_streamer/rover_video_streamer/video_streamer.py")
+
         self.processes = {
-            "tf_republisher": {
-                "name": "TF Web Republisher",
-                "cmd": ["ros2", "run", "tf2_web_republisher", "tf2_web_republisher_node"],
-                "pattern": "tf2_web_republisher_node",
-                "proc": None
-            },
             "state_publisher": {
                 "name": "Robot State Publisher",
                 "cmd": ["ros2", "launch", "rover_description", "view_robot.launch.py", "use_rviz:=false"],
-                "pattern": "view_robot.launch.py",
+                "pattern": "robot_state_publisher",
                 "proc": None
             },
             "motion_coordinator": {
@@ -55,34 +61,28 @@ class DashboardHelperNode(Node):
                 "pattern": "arm_stepper_arduino_driver",
                 "proc": None
             },
-            "battery_monitor": {
-                "name": "PowerQueen BMS Monitor (Bluetooth)",
-                "cmd": ["ros2", "run", "arm_controller", "battery_monitor", "--ros-args", "-p", "mac_address:=C8:47:80:54:35:AE"],
-                "pattern": "battery_monitor",
-                "proc": None
-            },
 
             "stream_cam_0": {
                 "name": "Camera 0 Streamer (CSIPort0)",
-                "cmd": ["python3", "/home/orc/D.A.V.E./ros2_ws/src/rover_video_streamer/rover_video_streamer/video_streamer.py", "--camera-type", "csi", "--device", "0", "--host", "192.168.1.87", "--port", "5000"],
+                "cmd": ["python3", video_streamer_path, "--camera-type", "csi", "--device", "0", "--host", "192.168.1.87", "--port", "5000"],
                 "pattern": "video_streamer.py.*--device 0(?!.*--fps 60)",
                 "proc": None
             },
             "stream_cam_0_60fps": {
                 "name": "Camera 0 Streamer (60 FPS)",
-                "cmd": ["python3", "/home/orc/D.A.V.E./ros2_ws/src/rover_video_streamer/rover_video_streamer/video_streamer.py", "--camera-type", "csi", "--device", "0", "--host", "192.168.1.87", "--port", "5000", "--fps", "60"],
+                "cmd": ["python3", video_streamer_path, "--camera-type", "csi", "--device", "0", "--host", "192.168.1.87", "--port", "5000", "--fps", "60"],
                 "pattern": "video_streamer.py.*--device 0.*--fps 60",
                 "proc": None
             },
             "stream_cam_1": {
                 "name": "Camera 1 Streamer (CSIPort1)",
-                "cmd": ["python3", "/home/orc/D.A.V.E./ros2_ws/src/rover_video_streamer/rover_video_streamer/video_streamer.py", "--camera-type", "csi", "--device", "1", "--host", "192.168.1.87", "--port", "5002"],
+                "cmd": ["python3", video_streamer_path, "--camera-type", "csi", "--device", "1", "--host", "192.168.1.87", "--port", "5002"],
                 "pattern": "video_streamer.py.*--device 1",
                 "proc": None
             },
             "stream_cam_2": {
                 "name": "Camera 2 Streamer (USB Video2)",
-                "cmd": ["python3", "/home/orc/D.A.V.E./ros2_ws/src/rover_video_streamer/rover_video_streamer/video_streamer.py", "--camera-type", "v4l2", "--device", "/dev/video2", "--host", "192.168.1.87", "--port", "5004"],
+                "cmd": ["python3", video_streamer_path, "--camera-type", "v4l2", "--device", "/dev/video2", "--host", "192.168.1.87", "--port", "5004"],
                 "pattern": "video_streamer.py.*--device /dev/video2",
                 "proc": None
             },
@@ -214,9 +214,10 @@ class DashboardHelperNode(Node):
                 try:
                     self.get_logger().info(f"Starting process: {proc_info['name']} via command: {cmd}")
                     cmd_str = " ".join(cmd)
+                    install_setup = os.path.join(self.repo_root, "ros2_ws/install/setup.bash")
                     full_cmd = [
                         "bash", "-c",
-                        f"source /opt/ros/humble/setup.bash 2>/dev/null; source /home/orc/D.A.V.E./ros2_ws/install/setup.bash 2>/dev/null; exec {cmd_str}"
+                        f"source /opt/ros/humble/setup.bash 2>/dev/null; source {install_setup} 2>/dev/null; exec {cmd_str}"
                     ]
                     log_file = open(f"/tmp/dashboard_proc_{key}.log", "w")
                     proc = subprocess.Popen(

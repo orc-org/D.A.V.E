@@ -19,10 +19,17 @@
             </userTransports>
             <useBuiltinTransports>false</useBuiltinTransports>
             <builtin>
+                <!-- Listen for discovery announcements on standard DDS multicast -->
+                <metatrafficMulticastLocatorList>
+                    <locator><udpv4><address>239.255.0.1</address></udpv4></locator>
+                </metatrafficMulticastLocatorList>
+                <!-- Send discovery announcements to local multicast and unicast antenna peers -->
                 <initialPeersList>
+                    <!-- Standard DDS multicast for local/switched network discovery (unlimited nodes) -->
+                    <locator><udpv4><address>239.255.0.1</address></udpv4></locator>
                     <!-- Localhost for Jetson internal communication and local testing -->
                     <locator><udpv4><address>127.0.0.1</address></udpv4></locator>
-                    <!-- Unicast for reliable long-range antenna communication -->
+                    <!-- Unicast fallback for reliable long-range antenna communication -->
                     <locator><udpv4><address>192.168.1.87</address></udpv4></locator>
                     <locator><udpv4><address>192.168.1.88</address></udpv4></locator>
                 </initialPeersList>

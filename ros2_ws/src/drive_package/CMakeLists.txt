@@ -8,6 +8,8 @@ endif()
 
 # Find dependencies
 find_package(ament_cmake REQUIRED)
+find_package(ament_index_cpp REQUIRED)
+find_package(yaml-cpp REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(sensor_msgs REQUIRED)
 find_package(std_msgs REQUIRED)
@@ -24,44 +26,19 @@ ament_target_dependencies(drive_node
   geometry_msgs
 )
 
-add_executable(stepper_driver_node src/stepper_driver_node.cpp)
-ament_target_dependencies(stepper_driver_node
-  rclcpp
-  std_msgs
-)
-
-add_executable(vesc_driver_node src/vesc_driver_node.cpp)
-ament_target_dependencies(vesc_driver_node
-  rclcpp
-  std_msgs
-)
-
 add_executable(vesc_can_driver_node src/vesc_can_driver_node.cpp)
 ament_target_dependencies(vesc_can_driver_node
   rclcpp
+  ament_index_cpp
   std_msgs
 )
+target_link_libraries(vesc_can_driver_node yaml-cpp)
 
 install(TARGETS
   drive_node
-  stepper_driver_node
-  vesc_driver_node
   vesc_can_driver_node
   DESTINATION lib/${PROJECT_NAME}
 )
-
-#Shouldn't need the stuff commented out anymore.
-
-# Python visualizer thingy
-##install(PROGRAMS
-#  scripts/input_viewer.py
-#DESTINATION lib/${PROJECT_NAME}
-#)
-
-# Install the ps5 png to use for background
-##install(DIRECTORY resource/
-#  DESTINATION share/${PROJECT_NAME}/resource
-#)
 
 # -----------------------------
 # Linting
