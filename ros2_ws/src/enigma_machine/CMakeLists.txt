@@ -35,12 +35,8 @@ install(TARGETS
 #install python modules
 ament_python_install_package(${PROJECT_NAME})
 
-#python nodes should be made executable when you declare them (using the "chmod +x py_nofe.py" command in command line)
-#therefore we do not need a section to declare our executables like we did for c++ nodes
-
 #install python executables
 install(PROGRAMS
-  scripts/py_node.py
   scripts/morse_recorder.py
   DESTINATION lib/${PROJECT_NAME}
 )
