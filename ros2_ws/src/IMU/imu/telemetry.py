@@ -78,6 +78,12 @@ class TelemetryNode(Node):
         self.publishing_enabled = True
         self.bno = None
         self.i2c = None
+        # Synthetic data is opt-in (sim_mode:=true). Without it, a missing or failed sensor means NOTHING is
+        # published, so consumers see a dead topic instead of a perfectly level, stationary fake IMU.
+        self.last_connect_attempt = 0.0
+        self.reconnect_period_s = 2.0
+        self.read_failures = 0
+        self.max_read_failures = max(int(self.publish_rate), 1)   # about one second of failed reads
 
         # cache last valid readings to avoid zero-quaternion frames on unready I2C packets
         self.last_valid_accel = (0.0, 0.0, 9.81)
@@ -116,14 +122,18 @@ class TelemetryNode(Node):
     def _init_hardware(self):
         """attempt to initialize the bno085 hardware sensor."""
         if self.sim_mode:
-            self.get_logger().info("Simulation mode requested. Running without physical hardware.")
+            self.get_logger().warn(
+                "sim_mode is true: publishing SYNTHETIC IMU data (level, stationary). Never use this on the rover."
+            )
             return
 
+        self.last_connect_attempt = time.monotonic()
         if not ADAFRUIT_AVAILABLE:
-            self.get_logger().warn(
-                "Adafruit BNO08x libraries not available. Falling back to simulation mode."
+            # used to switch silently to synthetic data, which looked like a working IMU
+            self.get_logger().error(
+                "Adafruit BNO08x libraries not available: no IMU data will be published. "
+                "Install adafruit-circuitpython-bno08x and adafruit-extended-bus, or run with sim_mode:=true for synthetic data."
             )
-            self.sim_mode = True
             return
 
         try:
@@ -134,22 +144,23 @@ class TelemetryNode(Node):
             self.bno.enable_feature(BNO_REPORT_ROTATION_VECTOR)
             self.bno.enable_feature(BNO_REPORT_MAGNETOMETER)
             time.sleep(0.2)  # Give BNO085 hardware time to initialize reports
-            self.sim_mode = False
+            self.read_failures = 0
             self.get_logger().info(
                 f"Successfully connected to BNO085 on Bus {self.i2c_bus_num} (Address: {hex(self.i2c_address)})."
             )
         except Exception as e:
-            self.get_logger().warn(
+            self.get_logger().error(
                 f"Failed to connect to BNO085 on Bus {self.i2c_bus_num}: {e}. "
-                "Falling back to simulation mode."
+                f"No IMU data is published; retrying every {self.reconnect_period_s:.0f} s."
             )
-            self.sim_mode = True
             self.bno = None
             self.i2c = None
 
     def read_sensor_data(self):
-        """read sensor data from bno085 or generate simulated data if in sim mode."""
-        if not self.sim_mode and self.bno is not None:
+        """read sensor data from bno085, or synthetic data if sim_mode is true. Returns None when there is no data."""
+        if not self.sim_mode:
+            if self.bno is None:
+                return None
             try:
                 accel = self.bno.acceleration
                 gyro = self.bno.gyro
@@ -171,15 +182,27 @@ class TelemetryNode(Node):
                 gyro_x, gyro_y, gyro_z = self.last_valid_gyro
                 quat_i, quat_j, quat_k, quat_real = self.last_valid_quat
 
+                self.read_failures = 0
                 return accel_x, accel_y, accel_z, gyro_x, gyro_y, gyro_z, quat_i, quat_j, quat_k, quat_real
             except Exception as e:
-                self.get_logger().warn(f"Transient error reading BNO085 sensor: {e}. Returning last valid frame.")
+                # A transient glitch repeats the last frame; a dead sensor used to repeat it forever.
+                self.read_failures += 1
+                if self.read_failures >= self.max_read_failures:
+                    self.get_logger().error(
+                        f"BNO085 read failed {self.read_failures} times in a row ({e}): "
+                        "stopped publishing IMU data, reconnecting."
+                    )
+                    self.bno = None
+                    self.i2c = None
+                    return None
+                self.get_logger().warn(f"Transient error reading BNO085 sensor: {e}. Returning last valid frame.",
+                                       throttle_duration_sec=1.0)
                 accel_x, accel_y, accel_z = self.last_valid_accel
                 gyro_x, gyro_y, gyro_z = self.last_valid_gyro
                 quat_i, quat_j, quat_k, quat_real = self.last_valid_quat
                 return accel_x, accel_y, accel_z, gyro_x, gyro_y, gyro_z, quat_i, quat_j, quat_k, quat_real
 
-        # simulated fallback data (gravity on z, zero gyro, identity quat)
+        # synthetic data, only when sim_mode is true (gravity on z, small wobble, identity quat)
         t = self.get_clock().now().nanoseconds * 1e-9
         accel_x = 0.05 * np.sin(t)
         accel_y = 0.05 * np.cos(t)
@@ -193,10 +216,20 @@ class TelemetryNode(Node):
         return accel_x, accel_y, accel_z, gyro_x, gyro_y, gyro_z, quat_i, quat_j, quat_k, quat_real
 
     def timer_callback(self):
+        if not self.sim_mode and self.bno is None:
+            # (missing libraries will not appear at run time, so only retry the I2C connection)
+            if ADAFRUIT_AVAILABLE and time.monotonic() - self.last_connect_attempt >= self.reconnect_period_s:
+                self._init_hardware()
+            if self.bno is None:
+                return
+
         if not self.publishing_enabled:
             return
 
-        accel_x, accel_y, accel_z, gyro_x, gyro_y, gyro_z, quat_i, quat_j, quat_k, quat_real = self.read_sensor_data()
+        data = self.read_sensor_data()
+        if data is None:
+            return
+        accel_x, accel_y, accel_z, gyro_x, gyro_y, gyro_z, quat_i, quat_j, quat_k, quat_real = data
         roll, pitch, raw_yaw = quaternion_to_euler_deg(quat_i, quat_j, quat_k, quat_real)
         self.last_raw_roll = roll
         self.last_raw_pitch = pitch
@@ -306,9 +339,14 @@ class TelemetryNode(Node):
 
     def handle_get_status(self, request, response):
         """service callback to get node status."""
-        mode_str = "Simulation" if self.sim_mode else "Hardware (BNO085)"
+        if self.sim_mode:
+            mode_str = "Simulation (synthetic data)"
+        elif self.bno is None:
+            mode_str = "No sensor (not publishing, retrying)"
+        else:
+            mode_str = "Hardware (BNO085)"
+        response.success = self.sim_mode or self.bno is not None
         pub_str = "Active" if self.publishing_enabled else "Paused"
-        response.success = True
         response.message = f"Status: {mode_str} | Publishing: {pub_str} | Bus: {self.i2c_bus_num} | Rate: {self.publish_rate} Hz"
         return response
 

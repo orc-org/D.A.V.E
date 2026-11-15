@@ -9,7 +9,7 @@ def generate_launch_description():
     sim_mode_arg = DeclareLaunchArgument(
         'sim_mode',
         default_value='false',
-        description='run imu telemetry in simulation mode if true'
+        description='publish synthetic IMU data if true (never on the rover); if false and the sensor fails, nothing is published'
     )
     i2c_bus_arg = DeclareLaunchArgument(
         'i2c_bus',

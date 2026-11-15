@@ -15,7 +15,7 @@ Reads a BNO085 on I²C bus 7, address `0x4A`, enabling accelerometer, gyroscope,
 - `/imu/euler` — roll, pitch, yaw in **degrees** after subtracting tare offsets.
 - `/imu/telemetry_str` — formatted text for the dashboard.
 
-Quaternion → Euler uses the standard ZYX (yaw-pitch-roll) conversion. The `~/calibrate` service stores the current yaw as a tare offset so that the current heading reads 0° ("true north"); `~/calibrate_all` tares roll and pitch as well. On read errors it re-publishes the last valid frame. If the Adafruit libraries are missing or `sim_mode` is true it publishes synthetic data (gravity on z, small sinusoids).
+Quaternion → Euler uses the standard ZYX (yaw-pitch-roll) conversion. The `~/calibrate` service stores the current yaw as a tare offset so that the current heading reads 0° ("true north"); `~/calibrate_all` tares roll and pitch as well. On an occasional read error it re-publishes the last valid frame; after about one second of consecutive failures it stops publishing and reconnects. Synthetic data (gravity on z, small sinusoids, identity orientation) is published **only** with `sim_mode:=true`, with a warning. Without it, a missing library or an unreachable sensor logs an error and publishes nothing, retrying the I²C connection every 2 s, so a dead IMU shows up as a silent topic rather than as a level, stationary rover (it used to fall back to synthetic data silently). `~/get_status` reports which state the node is in.
 
 ## IMU filter (`kalman_filter`) — 15-state AUKF
 

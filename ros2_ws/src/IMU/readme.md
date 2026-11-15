@@ -135,7 +135,7 @@ ros2 service call /imu_kalman_filter/get_state std_srvs/srv/Trigger
 - `i2c_bus` (int, default: `7`)
 - `i2c_address` (int, default: `0x4A`)
 - `publish_rate` (float, default: `20.0` Hz)
-- `sim_mode` (bool, default: `false`)
+- `sim_mode` (bool, default: `false`): `true` publishes synthetic data. With `false`, a missing library or sensor publishes **nothing** (errors are logged and the I²C connection is retried every 2 s); there is no silent fallback to synthetic data.
 - `dt` (float, default: `0.1` s)
 - `process_noise` (float, default: `0.01`)
 - `frame_id` (string, default: `'imu_link'`)

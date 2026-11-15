@@ -55,6 +55,7 @@ Three groups: what was fixed while consolidating the repository, what is still o
 | | `rover_ekf`: no way to run without GNSS (CIRC Meteorite task bans it) | `use_gps` parameter; when false, `/gps/fix` is not subscribed and a warning says position is dead reckoning |
 | | `navnode_nmea_smoke_test.sh` fed only GGA, which hid the RMC bug, and passed even when no position was parsed | Feeds RMC + GGA; checks a position was parsed, the RMC speed, and that an added waypoint is targeted |
 | | `vesc_can_driver_node` held the last command forever (no deadman), so a dropped link left the rover driving | `command_timeout` (0.5 s) stops a stale wheel immediately; per-message INFO logs in both drive nodes lowered |
+| | IMU `telemetry.py` fell back to synthetic data silently when the BNO085 or its libraries were missing, and repeated the last frame forever if the sensor died | Synthetic data only with `sim_mode:=true`; otherwise nothing is published, an error is logged and the connection is retried |
 | Docs | `slam/architecture.md` gave the Unitree driver's frames as `lidar_link`/`lidar_imu_link` (those are the canonical names); the SDK uses `unilidar_lidar`/`unilidar_imu` | Corrected |
 
 ## 2. Open — needs measurement or a team decision
@@ -81,7 +82,7 @@ Three groups: what was fixed while consolidating the repository, what is still o
     - `start_sim_system.sh` / `start_dashboard_system.sh` write logs to fixed `/tmp` files and do not stop `rosapi`; the sim script only warns about dead children.
     - `pyflakes` also reports unused imports/variables in several nodes (`kalman_filter.py`, `telemetry.py`, `arm_stepper_*_driver_node.py`, `motion_coordinator_node.py`, `input_viewer.py`, `gps_bridge_node.py`); none affect behaviour.
     - `dashboard/app.js` was not linted (no Node.js in the environment).
-14. **Code-review findings left open** are listed with severity and the CIRC task they block in [code-review.md](code-review.md) (the IMU filter's double integration, synthetic IMU data on hardware failure, GNSS status/covariance, and the rest).
+14. **Code-review findings left open** are listed with severity and the CIRC task they block in [code-review.md](code-review.md) (the IMU filter's double integration, GNSS status/covariance, and the rest).
 15. **Removed as deprecated by the cleanup branch:** `GPSnode.cpp` (an older 840-line GPS node, superseded by `gps_bridge_node.py` and the serial code in `NAVnode`), `vesc_driver_node.cpp` (serial VESC driver), `stepper_driver_node.cpp`, `py_node.py`, `module_to_import.py`, `battery_monitor_node.py`, and the committed `jetson_morse` binary and `.dtbo` files. They are in git history if needed.
 
 ## 3. Incomplete by design
