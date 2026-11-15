@@ -25,11 +25,11 @@ Details are in [known-issues.md §1](known-issues.md#1-fixed-while-consolidating
 
 | Sev. | Finding | Where | Task impact |
 |---|---|---|---|
-| Critical | **No command timeout (deadman).** `drive_node` and `vesc_can_driver_node` hold the last target forever; a dropped Wi-Fi link or a crashed dashboard leaves the rover driving. Add a 0.5 s timeout to zero output. | `drive_system/src/drive_node.cpp`, `vesc_can_driver_node.cpp` | All tasks; required before any autonomy |
+| ~~Critical~~ Fixed | **No command timeout (deadman).** `vesc_can_driver_node` held the last target forever, so a dropped Wi-Fi link or a crashed dashboard left the rover driving. It now stops any wheel whose command is older than `command_timeout` (0.5 s), immediately and without ramping ([drive-system.md](drive-system.md)). Tested in WSL without a CAN bus: no stop while commands arrive at 10 Hz, and a stop after the publisher ends. | `drive_package/src/vesc_can_driver_node.cpp` | All tasks; required before any autonomy |
 | Critical | **`motion_coordinator` publishes `cmd_vel` in auto mode**, so the arm node can drive the rover. Its base pose is commands × 3.0, not a measurement. | `arm_controller/.../motion_coordinator_node.py` | All tasks; do not run auto mode on the real rover |
 | Major | `/cmd_vel` is normalised (−1…1) in this repo, but metric mode and the EKF treat it as m/s. Wheel radius 0.10 m (driver) vs 0.15 m (URDF). | `vesc_can_driver_node.cpp`, `rover_ekf` | Odometry and any controller tuning |
 | Major | No VESC status readback, so no wheel odometry. VESC CAN status frames carry ERPM; read them. | `vesc_can_driver_node.cpp` | SLAM (wheel prior), Meteorite |
-| Minor | Both drive nodes log at INFO on every message. | same | Log noise on the Jetson |
+| ~~Minor~~ Fixed | Both drive nodes logged at INFO on every message (20 Hz from `/joy`). Now DEBUG or throttled to 1 Hz. | `drive_node.cpp`, `vesc_can_driver_node.cpp` | Log noise on the Jetson |
 
 ### State estimation
 
@@ -92,7 +92,7 @@ Details are in [known-issues.md §1](known-issues.md#1-fixed-while-consolidating
 
 **Recommended order:**
 
-1. Deadman timeout in the drive path (small; protects everything after it).
+1. ~~Deadman timeout in the drive path~~ (done 2026-11-15).
 2. Make `telemetry.py`'s synthetic fallback opt-in, and fix `gps_bridge` status/covariance.
 3. Add a per-point time field to the simulated cloud and build Point-LIO (needs permission), then run E1 against KISS-ICP.
 4. Fuse LIO into `rover_ekf` (E2), with one TF tree and one origin.

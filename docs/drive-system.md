@@ -55,6 +55,8 @@ No node in this repository currently publishes either topic; the old `web_interf
 
 Subscribes to the four `/motor/*` topics, ramps each command toward its target, and writes one extended-ID CAN frame per wheel at `publish_rate` (50 Hz).
 
+**Deadman (`command_timeout`, default 0.5 s).** A wheel whose last command is older than this is set to zero at once, without ramping, and a warning is logged. Every command source must therefore publish continuously: the dashboard sends `/cmd_vel` at 10 Hz in manual mode and `joy_node` repeats at 20 Hz by default, while a node that publishes only on change will be stopped after 0.5 s. The wheels also stay stopped until the first command arrives. The timeout uses a steady clock, so it is unaffected by simulation time. `command_timeout:=0` disables it (bench tests only). The simulator's `sim_drive_bridge` has equivalent 0.3 s / 0.5 s timeouts.
+
 ### Ramp limiting
 
 Each tick the commanded value may change by at most

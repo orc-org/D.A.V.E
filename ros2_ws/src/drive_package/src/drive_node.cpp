@@ -114,7 +114,7 @@ private:
         float spin = 0.0f;
 
         // Checking to see what is being picked up from controller (Not required, but made debugging much easier)
-        RCLCPP_INFO(this->get_logger(), "\n\n\tController Inputs (For Debugging): \n\n Left Trigger: %.3f, Right Trigger: %.3f, LStick X Direction: %.3f\n", lt_raw, rt_raw, steering);
+        RCLCPP_DEBUG(this->get_logger(), "\n\n\tController Inputs (For Debugging): \n\n Left Trigger: %.3f, Right Trigger: %.3f, LStick X Direction: %.3f\n", lt_raw, rt_raw, steering);
 
         // NORMALIZE trigger inputs (released=1, pressed=-1 → 0..1)
         float lt_norm = (1.0f - lt_raw) * 0.5f;   // forward  (0..1)
@@ -174,7 +174,7 @@ private:
         rear_right_pub_->publish(rrmsg);
         
         // Tells user the power % to each motor
-        RCLCPP_INFO(this->get_logger(), "\n\n\tMotor Power Levels: \n\nFront Left: %d%% | Front Right: %d%%\nRear Left:  %d%% | Rear Right:  %d%%\n", 
+        RCLCPP_INFO_THROTTLE(this->get_logger(), *this->get_clock(), 1000, "\n\n\tMotor Power Levels: \n\nFront Left: %d%% | Front Right: %d%%\nRear Left:  %d%% | Rear Right:  %d%%\n", 
                     static_cast<int>(left*100.0), static_cast<int>(right*100.0),
                     static_cast<int>(left*100.0), static_cast<int>(right*100.0));
 

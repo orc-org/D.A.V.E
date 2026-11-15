@@ -27,7 +27,11 @@ public:
         this->declare_parameter<double>("max_duty", 0.95); // max duty cycle limit (0.0 to 1.0)
         this->declare_parameter<double>("ramp_rate", 1.0); // max velocity change per second
         this->declare_parameter<double>("publish_rate", 50.0); // CAN transmit loop frequency in Hz
-        
+        // Deadman: a wheel whose command is older than this (seconds) is stopped at once, without ramping.
+        // The dashboard publishes at 10 Hz and joy_node repeats at 20 Hz, so 0.5 s is several missed messages.
+        // Without it, a dropped link or a crashed publisher left the rover driving its last command. <= 0 disables.
+        this->declare_parameter<double>("command_timeout", 0.5);
+
         // CAN IDs for the 4 wheels
         this->declare_parameter<int>("fl_can_id", 53);
         this->declare_parameter<int>("fr_can_id", 44);
@@ -48,6 +52,7 @@ public:
         max_duty_ = this->get_parameter("max_duty").as_double();
         ramp_rate_ = this->get_parameter("ramp_rate").as_double();
         publish_rate_ = this->get_parameter("publish_rate").as_double();
+        command_timeout_ = this->get_parameter("command_timeout").as_double();
 
         wheel_radius_ = this->get_parameter("wheel_radius").as_double();
         pole_pairs_ = this->get_parameter("pole_pairs").as_int();
@@ -77,26 +82,30 @@ public:
         fl_sub_ = this->create_subscription<std_msgs::msg::Float32>(
             "/motor/front_left", sub_qos,
             [this](const std_msgs::msg::Float32::SharedPtr msg) {
-                RCLCPP_INFO(this->get_logger(), "Received front_left: %.3f", msg->data);
+                RCLCPP_DEBUG(this->get_logger(), "Received front_left: %.3f", msg->data);   // was INFO on every message
                 target_fl_ = std::max(-1.0f, std::min(1.0f, msg->data));
+                last_fl_ = steady_.now();
             });
 
         fr_sub_ = this->create_subscription<std_msgs::msg::Float32>(
             "/motor/front_right", sub_qos,
             [this](const std_msgs::msg::Float32::SharedPtr msg) {
                 target_fr_ = std::max(-1.0f, std::min(1.0f, msg->data));
+                last_fr_ = steady_.now();
             });
 
         rl_sub_ = this->create_subscription<std_msgs::msg::Float32>(
             "/motor/rear_left", sub_qos,
             [this](const std_msgs::msg::Float32::SharedPtr msg) {
                 target_rl_ = std::max(-1.0f, std::min(1.0f, msg->data));
+                last_rl_ = steady_.now();
             });
 
         rr_sub_ = this->create_subscription<std_msgs::msg::Float32>(
             "/motor/rear_right", sub_qos,
             [this](const std_msgs::msg::Float32::SharedPtr msg) {
                 target_rr_ = std::max(-1.0f, std::min(1.0f, msg->data));
+                last_rr_ = steady_.now();
             });
 
         // periodic CAN transmit & ramping loop
@@ -106,8 +115,8 @@ public:
             std::bind(&VescCanDriverNode::updateLoop, this));
 
         RCLCPP_INFO(this->get_logger(), "VESC CAN Driver Node Initialized.");
-        RCLCPP_INFO(this->get_logger(), "Interface: %s | Mode: %s | Max Duty: %.2f | Ramp Rate: %.1f/s", 
-                    can_interface_.c_str(), control_mode_.c_str(), max_duty_, ramp_rate_);
+        RCLCPP_INFO(this->get_logger(), "Interface: %s | Mode: %s | Max Duty: %.2f | Ramp Rate: %.1f/s | Command timeout: %.2f s",
+                    can_interface_.c_str(), control_mode_.c_str(), max_duty_, ramp_rate_, command_timeout_);
     }
 
     ~VescCanDriverNode()
@@ -195,6 +204,22 @@ private:
         double dt = 1.0 / publish_rate_;
         double max_change = ramp_rate_ * dt;
 
+        // deadman: stop any wheel whose command is stale (no ramp, so the rover stops at once)
+        if (command_timeout_ > 0.0)
+        {
+            const rclcpp::Time now = steady_.now();
+            bool stopped = false;
+            stopped |= enforceTimeout(now, last_fl_, target_fl_, current_fl_);
+            stopped |= enforceTimeout(now, last_fr_, target_fr_, current_fr_);
+            stopped |= enforceTimeout(now, last_rl_, target_rl_, current_rl_);
+            stopped |= enforceTimeout(now, last_rr_, target_rr_, current_rr_);
+            if (stopped)
+            {
+                RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 2000,
+                    "No motor command for %.2f s: wheels stopped (deadman)", command_timeout_);
+            }
+        }
+
         // apply ramping to each motor
         current_fl_ = rampValue(current_fl_, target_fl_, max_change);
         current_fr_ = rampValue(current_fr_, target_fr_, max_change);
@@ -206,6 +231,17 @@ private:
         processAndSend("Front Right", current_fr_, fr_can_id_);
         processAndSend("Rear Left", current_rl_, rl_can_id_);
         processAndSend("Rear Right", current_rr_, rr_can_id_);
+    }
+
+    // Zeroes a wheel whose last command is older than command_timeout_. Returns true only when the wheel
+    // was still commanded to move, so the warning fires on a real stop and not every cycle while idle.
+    bool enforceTimeout(const rclcpp::Time &now, const rclcpp::Time &last, float &target, float &current)
+    {
+        if ((now - last).seconds() <= command_timeout_) return false;
+        bool wasMoving = (target != 0.0f || current != 0.0f);
+        target = 0.0f;
+        current = 0.0f;
+        return wasMoving;
     }
 
     float rampValue(float current, float target, double max_change)
@@ -291,6 +327,15 @@ private:
     double max_duty_;
     double ramp_rate_;
     double publish_rate_;
+    double command_timeout_;
+
+    // time each wheel last received a command, on a steady clock (unaffected by sim time or clock jumps);
+    // they start at the clock's epoch, so the wheels stay stopped until the first command arrives
+    rclcpp::Clock steady_{RCL_STEADY_TIME};
+    rclcpp::Time last_fl_{0, 0, RCL_STEADY_TIME};
+    rclcpp::Time last_fr_{0, 0, RCL_STEADY_TIME};
+    rclcpp::Time last_rl_{0, 0, RCL_STEADY_TIME};
+    rclcpp::Time last_rr_{0, 0, RCL_STEADY_TIME};
 
     double wheel_radius_;
     int pole_pairs_;
