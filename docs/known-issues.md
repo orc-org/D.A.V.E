@@ -46,6 +46,14 @@ Three groups: what was fixed while consolidating the repository, what is still o
 | | `receive_stream.sh` built its pipeline as a string and ran it through `eval` | Argument array, checks `gst-launch-1.0` exists |
 | | `video_streamer.py` rejected `--ros-args`; two simultaneous focus triggers could start two sweeps | `parse_known_args`; the in-progress flag is claimed under a lock |
 | | `test_dm556y_steppers.py` accepted any frequency | Refuses above 25 kHz unless `--force` |
+| Code review ([code-review.md](code-review.md)) | `NAVnode`: a buffer containing an RMC sentence was discarded (the parser stepped onto a comma and `stod` threw), so speed, heading and date were never set and receivers that send RMC lost their position too | Field-based RMC/GGA/VTG parsing with hemisphere handling; position only updates on a valid fix |
+| | `NAVnode`: `nextWaypoint` was set once in the constructor, while every route was empty, so no waypoint added later was ever targeted; removing a waypoint left it dangling | `validateTarget()` each tick and in the manual target services; route/direction changes restart targeting; the end of a route is remembered |
+| | `NAVnode`: serial reads are not line-buffered (≤ 256 bytes per tick), so sentences split between ticks were lost, and speed/heading reset to 0 on any tick without RMC | Bytes are kept across ticks; speed and heading hold until the next RMC/VTG |
+| | `NAVnode`: the track log stored `currentPosition` itself, which is deleted every tick and again by the list node (dangling pointers, double free at shutdown); the log printed `currentPosition` on every line | Stores a copy; prints each logged point |
+| | `NAVnode`: `removeLastWaypoint` checked the followed route but removed from the edited one; `SelectRouteToFollow`/`SelectRouteToEdit` never set their success message (unreachable code after `default`) | Checks the edited route; message moved out of the switch |
+| | `rover_ekf`: the IMU update put the measured yaw into a 3-row measurement against the full state, comparing roll/pitch with x/y | Yaw-only update (1×5 `H`) |
+| | `rover_ekf`: no way to run without GNSS (CIRC Meteorite task bans it) | `use_gps` parameter; when false, `/gps/fix` is not subscribed and a warning says position is dead reckoning |
+| | `navnode_nmea_smoke_test.sh` fed only GGA, which hid the RMC bug, and passed even when no position was parsed | Feeds RMC + GGA; checks a position was parsed, the RMC speed, and that an added waypoint is targeted |
 | Docs | `slam/architecture.md` gave the Unitree driver's frames as `lidar_link`/`lidar_imu_link` (those are the canonical names); the SDK uses `unilidar_lidar`/`unilidar_imu` | Corrected |
 
 ## 2. Open — needs measurement or a team decision
@@ -66,13 +74,14 @@ Three groups: what was fixed while consolidating the repository, what is still o
     - `test_dm556y_steppers.py` drives pins 15 (STEP) and 13 (DIR); its docstring says 15 and 7, the arm node uses 33/18 and the gripper 32/13. Confirm the wiring before running it.
     - `NAVnode` writes `captains log <date>.txt` into `src/navigation_system/captainsLogs` **relative to the current directory**, so the location depends on where the node was started.
     - `morse_recorder.py` assumes the first pulse is a dot and judges every later pulse against the shortest seen, so a message that starts with a dash decodes wrongly; it also times pulses with `time.time()` (wall clock, not monotonic), reads and writes its buffer from two threads without a lock, and calls `cv2.imshow` from the capture thread.
-    - `video_streamer.py` parses `sys.argv` directly, so `ros2 run … --ros-args` fails argument parsing; `--width`/`--height` are strings.
+    - `video_streamer.py`: `--width`/`--height` are strings (the `--ros-args` failure is fixed).
     - `receive_stream.bat` exits with code 0 on an unknown option.
     - `sim_drive_bridge.py` multiplies `/cmd_vel` by `max_linear_speed`/`max_angular_speed`, which is right only because this repository treats `/cmd_vel` as normalised (−1…1, as `drive_node` does), not as m/s.
     - `start_sim_system.sh` / `start_dashboard_system.sh` write logs to fixed `/tmp` files and do not stop `rosapi`; the sim script only warns about dead children.
     - `pyflakes` also reports unused imports/variables in several nodes (`kalman_filter.py`, `telemetry.py`, `arm_stepper_*_driver_node.py`, `motion_coordinator_node.py`, `input_viewer.py`, `gps_bridge_node.py`); none affect behaviour.
     - `dashboard/app.js` was not linted (no Node.js in the environment).
-14. **Removed as deprecated by the cleanup branch:** `GPSnode.cpp` (an older 840-line GPS node, superseded by `gps_bridge_node.py` and the serial code in `NAVnode`), `vesc_driver_node.cpp` (serial VESC driver), `stepper_driver_node.cpp`, `py_node.py`, `module_to_import.py`, `battery_monitor_node.py`, and the committed `jetson_morse` binary and `.dtbo` files. They are in git history if needed.
+14. **Code-review findings left open** are listed with severity and the CIRC task they block in [code-review.md](code-review.md) (no command timeout in the drive path, the IMU filter's double integration, synthetic IMU data on hardware failure, GNSS status/covariance, and the rest).
+15. **Removed as deprecated by the cleanup branch:** `GPSnode.cpp` (an older 840-line GPS node, superseded by `gps_bridge_node.py` and the serial code in `NAVnode`), `vesc_driver_node.cpp` (serial VESC driver), `stepper_driver_node.cpp`, `py_node.py`, `module_to_import.py`, `battery_monitor_node.py`, and the committed `jetson_morse` binary and `.dtbo` files. They are in git history if needed.
 
 ## 3. Incomplete by design
 

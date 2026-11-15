@@ -10,6 +10,32 @@ static double nmeaToDegrees(double ddmm){
     return degrees + (ddmm - degrees * 100.0) / 60.0;
 }
 
+// Fields (split on commas) of the most recent COMPLETE sentence of the given type in a serial buffer,
+// e.g. nmeaFields(buffer, "RMC") for "$GNRMC,...*hh". Returns an empty vector when there is none.
+// A sentence is complete when it is followed by its checksum marker or a line end.
+static std::vector<std::string> nmeaFields(const std::string& buffer, const char* type){
+    std::vector<std::string> fields;
+    size_t pos = buffer.rfind(type);
+    while (pos != std::string::npos) {
+        size_t begin = buffer.rfind('$', pos);
+        size_t end = buffer.find_first_of("*\r\n", pos);
+        if (begin != std::string::npos && end != std::string::npos && pos - begin == 3) {
+            std::string sentence = buffer.substr(begin, end - begin);
+            size_t from = 0;
+            while (true) {
+                size_t comma = sentence.find(',', from);
+                fields.push_back(sentence.substr(from, comma == std::string::npos ? std::string::npos : comma - from));
+                if (comma == std::string::npos) break;
+                from = comma + 1;
+            }
+            return fields;
+        }
+        if (pos == 0) break;
+        pos = buffer.rfind(type, pos - 1);
+    }
+    return fields;
+}
+
 class DummyGPS{
 public:
     DummyGPS(){
@@ -664,7 +690,8 @@ NAVnode::NAVnode() : Node("NAVnode"), count_(0) {
     currentPosition = new Waypoint(0.0, 0.0);
 
     debug = false;
-    travellingForwards = false;
+    travellingForwards = true;   // the target starts at the head of the route, so travel towards the tail
+    routeFinished = false;
         
     obstacleCount = 0;
     obstacleLimit = 10;
@@ -787,8 +814,8 @@ NAVnode::~NAVnode() {
                     ex: Waypoint 7: (5, 7) {5013.21201 N, 11913.15950 W}
                 */
                 outputFile << "Waypoint " << ++count << ": "
-                           << "(" << currentPosition->getX() << ", " << currentPosition->getY() << ") "
-                           << "{" << currentPosition->getLatitude() << " N, " << currentPosition->getLongitude() << " W}";
+                           << "(" << current->point->getX() << ", " << current->point->getY() << ") "
+                           << "{" << current->point->getLatitude() << " N, " << current->point->getLongitude() << " W}\n";   // was currentPosition for every line
                 
                 current = current->next;
             }
@@ -802,8 +829,8 @@ NAVnode::~NAVnode() {
                     ex: Waypoint 7: (5, 7) {5013.21201 N, 11913.15950 W}
                 */
                 cout << "Waypoint " << ++count << ": "
-                     << "(" << currentPosition->getX() << ", " << currentPosition->getY() << ") "
-                     << "{" << currentPosition->getLatitude() << " N, " << currentPosition->getLongitude() << " W}";
+                     << "(" << current->point->getX() << ", " << current->point->getY() << ") "
+                     << "{" << current->point->getLatitude() << " N, " << current->point->getLongitude() << " W}\n";   // was currentPosition for every line
 
                 current = current->next;
             }
@@ -816,7 +843,24 @@ NAVnode::~NAVnode() {
 }
 
     // timers
+void NAVnode::validateTarget(){
+    ListNode* node = routes[routeToFollow].getHead();
+    if (nextWaypoint != nullptr) {
+        // pointer comparison only: the node may already have been deleted by a remove/clear service
+        for (ListNode* n = node; n != nullptr; n = n->next) {
+            if (n == nextWaypoint) return;
+        }
+        nextWaypoint = nullptr;
+    }
+    if (!routeFinished) {
+        nextWaypoint = travellingForwards ? routes[routeToFollow].getHead() : routes[routeToFollow].getTail();
+    }
+}
+
 void NAVnode::mainTimer(){
+    // nextWaypoint used to be set once, in the constructor, while every route was still empty, so no
+    // waypoint added later was ever targeted; a removed waypoint also left it dangling.
+    validateTarget();
     updatePositonData();
 
     if (currentPosition == nullptr) {
@@ -835,6 +879,7 @@ void NAVnode::mainTimer(){
                 nextWaypoint = nextWaypoint->next;
             else
                 nextWaypoint = nextWaypoint->previous;
+            if (nextWaypoint == nullptr) routeFinished = true;   // do not start the route again by itself
         }
     }
 
@@ -857,7 +902,9 @@ void NAVnode::mainTimer(){
         this is plenty of detail, and not so much data that it becomes unmanageable
     */
     if(++cyclesSinceLogUpdated >= 100 && pointsLogged < 250){
-        pointsVisited.add(currentPosition);
+        // store a copy: currentPosition is deleted and replaced every tick, and ListNode deletes its point,
+        // so adding the pointer itself left dangling pointers and a double free at shutdown
+        pointsVisited.add(new Waypoint(*currentPosition));
         pointsLogged += 1;
         cyclesSinceLogUpdated = 0;
     }
@@ -866,7 +913,13 @@ void NAVnode::mainTimer(){
 }
 
 void NAVnode::updatePositonData(){
-    string message = GNSS->read();
+    // GNSS->read() returns only the bytes that arrived since the last tick (up to 256), so a sentence is
+    // often split across two ticks. Keep the bytes and parse the accumulated buffer instead.
+    gnssBuffer += GNSS->read();
+    if (gnssBuffer.size() > 4096) gnssBuffer.erase(0, gnssBuffer.size() - 4096);
+    string message = gnssBuffer;
+    size_t lastLineEnd = gnssBuffer.find_last_of('\n');
+    if (lastLineEnd != std::string::npos) gnssBuffer.erase(0, lastLineEnd + 1);   // keep only the unfinished sentence
 
     auto gnssInformation = navigation_interfaces::msg::DisplayInfo();
 
@@ -874,95 +927,54 @@ void NAVnode::updatePositonData(){
     double longitude = 0.0;
     double altitude = 0.0;
 
-    double heading = 0.0;
-    double speed = 0.0;
+    // speed and heading used to reset to 0 every tick, so a tick without an RMC sentence published 0 km/h
+    double heading = lastHeading;
+    double speed = lastSpeed;
 
-    int start = 0;
-
+    // Split the most recent complete RMC / GGA / VTG sentences on commas.
+    // (The earlier code searched for "A," and "N," and then stepped ONE character, which landed on the
+    //  comma, so the number conversion threw and every buffer containing an RMC sentence was discarded.)
+    bool havePosition = false;
     try {
-        // extract position and velocity data
-        /*
-            The GNSS data is formatted as an NMEA 0183 string
-            to get what we need, we are going to search for the commas that separate the different sections of the string
+        std::vector<std::string> rmc = nmeaFields(message, "RMC");
+        std::vector<std::string> gga = nmeaFields(message, "GGA");
+        std::vector<std::string> vtg = nmeaFields(message, "VTG");
 
-            example string that contains the position of the Rover:
-            $GNGGA, UTCtime, Latitude, N, longitude, W, Quality, #ofSVs, HDOP, altitude, M, GeoidSeparation, M, age ID*checksum
-
-            example string that contains the position, heading and speed of the Rover:
-            $GPRMC, UTCtime, status, Latitude, N, longitude, W, speed(kts), TrueTrack, Date, MagneticDeclination, checksum
-
-            the following code will extract the values we need and will work anywhere in North America
-            If DaVE is to travel accross the pond, modify the code
-        */
-
-        start = message.find("RMC", 0); // locate the section of the string with the RMC message
-        if (start != string::npos){ // if it exists, extract the data
-
-            start += 4; // get past the $GPRMC, section
-            start = message.find("A,", start); // locate start of Latitude section
-
-            if (start != string::npos){ // if statement ensures the status is not void
-                latitude = nmeaToDegrees(stod(message.substr(++start, 10)));
-
-                start = message.find("N,", start); // find start of longitude section
-                longitude = -nmeaToDegrees(stod(message.substr(++start, 10))); // western hemisphere assumed
-
-                start = message.find(",", start); // find the start of the speed section
-                speed = stoi(message.substr(++start, 5)) * 1.852; // multiply by 1.852 to convert from knots to km/h
-
-                start = message.find(",", start); // find the start of the heading section
-                if (nextWaypoint) {
-                    heading = nextWaypoint->point->degToRad(stoi(message.substr(++start, 6)));
-                } else {
-                    heading = 0.0;
-                }
-
-                if(!date.empty()){
-                    start = message.find(",", start);
-                    ++start;   // step past the comma (kept separate: the operands below are evaluated in unspecified order)
-                    date = message.substr(start, 2) + "/" + message.substr(start + 2, 2) + "/" + message.substr(start + 4, 2);
-                }
-            }
+        // RMC: 1 time, 2 status, 3 latitude, 4 N/S, 5 longitude, 6 E/W, 7 speed (knots), 8 true track (deg), 9 date
+        if (rmc.size() > 9 && rmc[2] == "A" && !rmc[3].empty() && !rmc[5].empty()) {
+            latitude = nmeaToDegrees(stod(rmc[3]));
+            if (rmc[4] == "S") latitude = -latitude;
+            longitude = nmeaToDegrees(stod(rmc[5]));
+            if (rmc[6] == "W") longitude = -longitude;
+            havePosition = true;
+            if (!rmc[7].empty()) speed = stod(rmc[7]) * 1.852;                     // knots to km/h
+            if (!rmc[8].empty()) heading = stod(rmc[8]) * Waypoint::pi / 180.0;    // course over ground
+            if (date.empty() && rmc[9].size() >= 6)                                 // ddmmyy, used in the log file name
+                date = rmc[9].substr(0, 2) + "-" + rmc[9].substr(2, 2) + "-" + rmc[9].substr(4, 2);
         }
-        else {
-            start = message.find("GGA", 0); // locate the section of the string with the GGA message
-            
-            if (start != string::npos){ // if it exists, extract the data
 
-                start += 4; // get past the $GNGGA, section
-                start = message.find(",", start); // find the start of the latitude section
-                latitude = nmeaToDegrees(stod(message.substr(++start, 10)));
+        // GGA: 2 latitude, 3 N/S, 4 longitude, 5 E/W, 6 fix quality (0 = no fix), 9 altitude (m)
+        if (gga.size() > 9 && !gga[6].empty() && gga[6] != "0" && !gga[2].empty() && !gga[4].empty()) {
+            latitude = nmeaToDegrees(stod(gga[2]));
+            if (gga[3] == "S") latitude = -latitude;
+            longitude = nmeaToDegrees(stod(gga[4]));
+            if (gga[5] == "W") longitude = -longitude;
+            if (!gga[9].empty()) altitude = stod(gga[9]);
+            havePosition = true;
+        }
 
-                start = message.find("N,", start) + 1; // find the start of the longitude section
-                longitude = -nmeaToDegrees(stod(message.substr(++start, 10))); // western hemisphere assumed (Alberta/BC)
-
-                start = message.find("W,", start) + 1; // start of the Quality section
-                start = message.find(",", ++start);  // start of the SV count section
-                start = message.find(",", ++start);  // start of the HDOP section
-                start = message.find(",", ++start);  // start of the altitude section
-                altitude = stod(message.substr(++start, 10));
-            }
-
-            start = message.find("VTG", 0); // locate the section of the string with the track information
-
-            if(start != string::npos){ // if it exists, extract the data
-
-                start += 4; // get past the $GPVTG, section
-                if (nextWaypoint) {
-                    heading = nextWaypoint->point->degToRad(stoi(message.substr(start, 6)));
-                } else {
-                    heading = 0.0;
-                }
-
-                start = message.find("N,", start) + 1; // locate the section with speed in km/h
-                speed = stoi(message.substr(++start, 5));
-            }
-            
+        // VTG: 1 true track (deg), 7 speed (km/h); only used when RMC did not give them
+        if (rmc.empty() && vtg.size() > 7) {
+            if (!vtg[1].empty()) heading = stod(vtg[1]) * Waypoint::pi / 180.0;
+            if (!vtg[7].empty()) speed = stod(vtg[7]);
         }
     }
-    catch (...) { /* If we don't look directly at it, it's as if the error never happened...*/ return; }
+    catch (...) { return; }   // a malformed number: skip this cycle rather than publish a wrong position
+    lastSpeed = speed;
+    lastHeading = heading;
 
-    if (currentPosition != nullptr && latitude != 0.0 && longitude != 0.0) {
+
+    if (currentPosition != nullptr && havePosition && latitude != 0.0 && longitude != 0.0) {
         delete currentPosition;
         currentPosition = new Waypoint(longitude, latitude, altitude, true); // constructor order is (longitude, latitude, altitude)
     } else if (currentPosition == nullptr) {
@@ -1126,6 +1138,8 @@ void NAVnode::toggleRouteToFollow(const std::shared_ptr<VoidService::Request> re
         case(Route4): routeToFollow = Route5; break;
         default: routeToFollow = Route1;      break;
     }
+    routeFinished = false;
+    nextWaypoint = nullptr;   // validateTarget() picks the new route's first waypoint
 }
 
 void NAVnode::toggleRouteToEdit(const std::shared_ptr<VoidService::Request> request, 
@@ -1145,6 +1159,7 @@ void NAVnode::toggleDebug(const std::shared_ptr<VoidService::Request> request, s
 
 void NAVnode::toggleDirection(const std::shared_ptr<VoidService::Request> request, std::shared_ptr<VoidService::Response> response){
     travellingForwards = !travellingForwards;
+    routeFinished = false;
 }
 
 void NAVnode::toggleCircumnavigationStyle(const std::shared_ptr<VoidService::Request> request, std::shared_ptr<VoidService::Response> response){
@@ -1156,6 +1171,7 @@ void NAVnode::toggleCircumnavigationStyle(const std::shared_ptr<VoidService::Req
 }
 
 void NAVnode::targetNextWaypoint(const std::shared_ptr<VoidService::Request> request, std::shared_ptr<VoidService::Response> response){
+    validateTarget();
     if (nextWaypoint == nullptr) {
         return;
     }
@@ -1167,6 +1183,7 @@ void NAVnode::targetNextWaypoint(const std::shared_ptr<VoidService::Request> req
 }
 
 void NAVnode::targetPreviousWaypoint(const std::shared_ptr<VoidService::Request> request, std::shared_ptr<VoidService::Response> response){
+    validateTarget();
     if (nextWaypoint == nullptr) {
         return;
     }
@@ -1185,9 +1202,10 @@ void NAVnode::selectRouteToFollow(const std::shared_ptr<SelectRoute::Request> re
         case Route4: routeToFollow = Route4; break;
         case Route5: routeToFollow = Route5; break;
         default: {response->output = "Error: invalid Route selection"; return;}
-
-        response->output = "Route successfully changed";
     }
+    response->output = "Route successfully changed";   // was inside the switch after the default case, so never ran
+    routeFinished = false;
+    nextWaypoint = nullptr;   // validateTarget() picks the new route's first waypoint
 }
 
 void NAVnode::selectRouteToEdit(const std::shared_ptr<SelectRoute::Request> request, std::shared_ptr<SelectRoute::Response> response){
@@ -1198,9 +1216,8 @@ void NAVnode::selectRouteToEdit(const std::shared_ptr<SelectRoute::Request> requ
         case Route4: routeToEdit = Route4; break;
         case Route5: routeToEdit = Route5; break;
         default: {response->output = "Error: invalid Route selection"; return;}
-
-        response->output = "Route successfully changed";
     }
+    response->output = "Route successfully changed";
 }
 
 void NAVnode::resetHome(const std::shared_ptr<ResetHome::Request> request, std::shared_ptr<ResetHome::Response> response){
@@ -1216,6 +1233,7 @@ void NAVnode::resetHome(const std::shared_ptr<ResetHome::Request> request, std::
 
 void NAVnode::clearRoute(const std::shared_ptr<VoidService::Request> request, std::shared_ptr<VoidService::Response> response){
     routes[routeToEdit].clear();
+    if (routeToEdit == routeToFollow) { nextWaypoint = nullptr; routeFinished = false; }
 }
 
 void NAVnode::addLocalWaypoint(const std::shared_ptr<AddLocalWaypoint::Request> request, 
@@ -1431,7 +1449,7 @@ void NAVnode::removeEarthCentredObstacle(const std::shared_ptr<RemoveEarthCentre
 }
 
 void NAVnode::removeLastWaypoint(const std::shared_ptr<RemoveLast::Request> request, std::shared_ptr<RemoveLast::Response> response){
-    ListNode* temp = routes[routeToFollow].getHead();
+    ListNode* temp = routes[routeToEdit].getHead();   // was routeToFollow: checked one route, removed from another
 
     if(temp == nullptr)
         response->output = "List is already empty";

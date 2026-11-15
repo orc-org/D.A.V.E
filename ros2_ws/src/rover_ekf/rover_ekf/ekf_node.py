@@ -55,6 +55,10 @@ class RoverEKFNode(Node):
         self.declare_parameter('topic_ekf_euler', '/ekf/filtered_euler')
         self.declare_parameter('frame_id', 'odom')
         self.declare_parameter('child_frame_id', 'base_link')
+        # Set false for GNSS-denied runs (CIRC Meteorite Search bans GPS): the fix topic is then
+        # not even subscribed, so a stale or stray fix cannot leak into the pose.
+        self.declare_parameter('use_gps', True)
+        self.use_gps = bool(self.get_parameter('use_gps').value)
 
         self.freq = float(self.get_parameter('frequency').value)
         self.dt = 1.0 / max(self.freq, 1.0)
@@ -93,9 +97,13 @@ class RoverEKFNode(Node):
         self.sub_imu_raw = self.create_subscription(
             Imu, self.topic_imu_raw, self.imu_raw_callback, 10
         )
-        self.sub_gps = self.create_subscription(
-            NavSatFix, self.topic_gps_fix, self.gps_fix_callback, 10
-        )
+        self.sub_gps = None
+        if self.use_gps:
+            self.sub_gps = self.create_subscription(
+                NavSatFix, self.topic_gps_fix, self.gps_fix_callback, 10
+            )
+        else:
+            self.get_logger().warn("use_gps is false: GNSS is NOT fused (position is dead reckoning only).")
         self.sub_cmd_vel = self.create_subscription(
             Twist, self.topic_cmd_vel, self.cmd_vel_callback, 10
         )
@@ -132,17 +140,15 @@ class RoverEKFNode(Node):
         self.last_imu_pitch = math.radians(msg.y)
         imu_yaw_rad = math.radians(msg.z)
 
-        # Update theta_yaw state using EKF Innovation
-        z = np.array([imu_yaw_rad, self.x[4]])  # [theta, omega]
-        H = np.array([
-            [0, 0, 1, 0, 0],
-            [0, 0, 0, 0, 1]
-        ])
-        
+        # Update theta_yaw only. (This used to add the state's own omega as a second "measurement":
+        # zero innovation, but it still shrank P and made the filter over-confident in omega.)
+        z = np.array([imu_yaw_rad])
+        H = np.array([[0, 0, 1, 0, 0]])
+
         y = z - H @ self.x
         y[0] = wrap_angle_rad(y[0])
 
-        S = H @ self.P @ H.T + self.R_imu
+        S = H @ self.P @ H.T + self.R_imu[0:1, 0:1]
         K = self.P @ H.T @ np.linalg.inv(S)
         self.x = self.x + K @ y
         self.x[2] = wrap_angle_rad(self.x[2])

@@ -59,7 +59,9 @@ done
 
 # 51 deg 27.6 min N, 112 deg 42.0 min W  ==  51.46 N, 112.70 W
 # (The checksum field is fake: NAVnode does not validate it, gps_bridge_node.py does.)
-( while true; do printf '$GNGGA,123519.00,5127.60000,N,11242.00000,W,1,12,0.9,792.0,M,0.0,M,,*00\r\n' >"$WORK/ttyB"; sleep 0.3; done ) &
+# An RMC and a GGA sentence arrive together, as from a real receiver. (A buffer containing RMC used
+# to be discarded entirely, so the earlier GGA-only feed hid that bug.) RMC carries 10 knots = 18.52 km/h.
+( while true; do printf '$GNRMC,123519.00,A,5127.60000,N,11242.00000,W,010.0,090.0,091126,,,A*00\r\n$GNGGA,123519.00,5127.60000,N,11242.00000,W,1,12,0.9,792.0,M,0.0,M,,*00\r\n' >"$WORK/ttyB"; sleep 0.3; done ) &
 FEED_PID=$!
 sleep 2
 
@@ -70,6 +72,16 @@ done
 
 INFO="$(timeout 15 ros2 topic echo --once /NAVDisplayInfo 2>/dev/null)"
 [ -n "$INFO" ] && pass "NAVDisplayInfo is published" || fail "NAVDisplayInfo not published"
+
+# Before home is set the local frame is centred on the Earth's centre, so a parsed position is
+# millions of metres from zero. Exactly (0, 0) means no position was parsed at all, which the
+# "near zero after ResetHome" check below cannot tell apart from success.
+LX0="$(echo "$INFO" | awk '/^local_x:/ {print $2}')"
+if [ -n "$LX0" ] && awk -v x="$LX0" 'BEGIN { exit !(x > 100000 || x < -100000) }'; then
+    pass "a position was parsed from the GNSS feed (local_x before home is $LX0 m)"
+else
+    fail "no position parsed from the GNSS feed (local_x before home is ${LX0:-?})"
+fi
 
 REPLY="$(timeout 15 ros2 service call /ResetHome navigation_interfaces/srv/ResetHome \
     "{longitude: -112.70, latitude: 51.46, password: $PW}" 2>&1)"
@@ -83,6 +95,24 @@ if [ -n "$LX" ] && [ -n "$LY" ] && awk -v x="$LX" -v y="$LY" -v t="$TOL_M" 'BEGI
     pass "local position after setting home is ($LX, $LY) m, within $TOL_M m of zero"
 else
     fail "local position after setting home is (${LX:-?}, ${LY:-?}) m, expected within $TOL_M m of zero"
+fi
+
+SPD="$(echo "$INFO" | awk '/^speed:/ {print $2}')"
+if [ -n "$SPD" ] && awk -v v="$SPD" 'BEGIN { exit !(v > 18.0 && v < 19.0) }'; then
+    pass "speed from the RMC sentence is $SPD km/h (expected 18.52)"
+else
+    fail "speed from the RMC sentence is ${SPD:-?} km/h, expected 18.52 (RMC not parsed)"
+fi
+
+# A waypoint added after start-up must become the target: 10 m east of home gives a range of about 10 m.
+timeout 15 ros2 service call /AddLocalWaypoint navigation_interfaces/srv/AddLocalWaypoint "{x: 10.0, y: 0.0}" >/dev/null 2>&1
+sleep 2
+INFO="$(timeout 15 ros2 topic echo --once /NAVDisplayInfo 2>/dev/null)"
+RNG="$(echo "$INFO" | awk '/^range2waypoint:/ {print $2}')"
+if [ -n "$RNG" ] && awk -v v="$RNG" 'BEGIN { exit !(v > 9.0 && v < 11.0) }'; then
+    pass "added waypoint is targeted: range2waypoint is $RNG m (expected about 10)"
+else
+    fail "added waypoint is not targeted: range2waypoint is ${RNG:-?} m, expected about 10"
 fi
 
 [ "$FAILS" -eq 0 ] && echo "all checks passed" || echo "$FAILS check(s) failed"

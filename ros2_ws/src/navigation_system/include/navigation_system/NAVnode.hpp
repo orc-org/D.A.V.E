@@ -96,6 +96,10 @@ class NAVnode : public rclcpp::Node{
 private:
     bool debug;                 // displays added information to the terminal for debugging purposes (false by default)
     bool travellingForwards;    // boolean to select the direction of travel along selected route 
+    bool routeFinished;         // true once the last waypoint of the followed route has been reached
+    std::string gnssBuffer;     // serial bytes kept across timer ticks, so a sentence split between two reads is not lost
+    double lastSpeed = 0.0;     // km/h, held until the next RMC/VTG sentence
+    double lastHeading = 0.0;   // rad, course over ground, held until the next RMC/VTG sentence
 
     int obstacleCount;          // keeps track of how many obstacles are currently stored in the system 
     int obstacleLimit;          // maximum number of obstacles that can be stored in the system
@@ -349,6 +353,14 @@ private:
 
     // timers
     void mainTimer();
+
+    /*
+        validateTarget()
+        ----------------
+        keeps nextWaypoint pointing at a node that is really in the followed route: it picks the first
+        waypoint when there is no target yet and drops a target whose node was removed or cleared
+    */
+    void validateTarget();
 
     /*
         updatePositionData()
