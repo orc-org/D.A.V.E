@@ -18,16 +18,13 @@ Helpers for the SLAM program described in [`docs/slam/`](../../docs/slam/README.
 ## FAST-LIO2 on the E1 simulation bag
 
 ```bash
-scripts/slam/fast_lio/setup.sh && source ~/slam_ws/install/setup.bash
-python3 scripts/slam/lidar_point_time.py --ros-args -p use_sim_time:=true &
-python3 scripts/slam/odom_to_tum.py /tmp/fastlio_tum.txt --ros-args -p use_sim_time:=true &
-ros2 run fast_lio fastlio_mapping --ros-args --params-file scripts/slam/fast_lio/sim_l2.yaml -p use_sim_time:=true &
-ros2 bag play BAG --clock          # the uncompressed (converted) E1 bag
-# when playback ends: Ctrl-C the three nodes, then
-python3 scripts/slam/eval_trajectory.py --est /tmp/fastlio_tum.txt --bag BAG --est-clock sim
+scripts/slam/fast_lio/setup.sh                 # once: clone (pinned), stub, build (~20 min at low priority)
+scripts/slam/fast_lio/run_bag.sh BAG /tmp/run1  # BAG = an uncompressed simulation bag
 ```
 
-Status 2026-11-15: FAST-LIO2 cloned and audited at the pinned commit; **not built yet** (building and running external code needs the user's approval on the development PC). `lidar_point_time.py` checked on the E1 bag (fields `x y z intensity time ring`, non-finite points dropped), and `--est-clock sim` checked by scoring the KISS-ICP E1 trajectory converted to simulation time (same ATE, 0.426 m).
+`run_bag.sh` starts `lidar_point_time.py`, `odom_to_tum.py` and `fastlio_mapping` (with `sim_l2.yaml`), plays the bag in real time with `--clock`, samples FAST-LIO's CPU and memory, and scores the result with `eval_trajectory.py --est-clock sim`.
+
+Status 2026-11-15: built in WSL2 (19 min, one package at a time) and run on the E1 bag; results in [research-plan.md](../../docs/slam/research-plan.md#e1--odometry-bench-off). `lidar_point_time.py` was checked on the bag, and `--est-clock sim` by scoring the KISS-ICP trajectory converted to simulation time (same ATE, 0.426 m).
 
 ## Typical session
 
