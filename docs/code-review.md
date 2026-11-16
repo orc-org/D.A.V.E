@@ -86,8 +86,8 @@ Details are in [known-issues.md §1](known-issues.md#1-fixed-while-consolidating
 |---|---|
 | Sensor contract (`/lidar/points`, `/lidar/imu`, `/camera/*`) | Defined ([slam/architecture.md](slam/architecture.md)); simulated LiDAR, IMU and RGB-D publish in Gazebo Fortress |
 | Pipeline (record → convert → run → score) | Works in simulation: KISS-ICP ATE 0.43 m on a 16.5 m loop ([slam/research-plan.md](slam/research-plan.md#e1--odometry-bench-off)) |
-| LiDAR-inertial candidates (Point-LIO, FAST-LIO2, DLIO) | Not built: cloning/building external code needs the user's permission. DLIO was reviewed: low build risk, moderate runtime risk (unauthenticated `save_pcd`, unbounded memory, stale `feature/ros2` branch); evaluate only in WSL with `ROS_LOCALHOST_ONLY=1`. Point-LIO (Unitree's port) is the closest match to the L2 |
-| Simulation realism | Missing: point time field (deskew), noise model, closed-loop driving for loop-closure metrics |
+| LiDAR-inertial candidates (Point-LIO, FAST-LIO2, DLIO) | FAST-LIO2 (official ROS 2 branch, pinned) chosen, cloned and audited 2026-11-15; build script, sim config, point-time node and evaluator support are ready ([scripts/slam/README.md](../scripts/slam/README.md#fast-lio2-on-the-e1-simulation-bag)); **the build awaits the user's approval**. DLIO was reviewed: low build risk, moderate runtime risk (unauthenticated `save_pcd`, unbounded memory, stale `feature/ros2` branch); evaluate only in WSL with `ROS_LOCALHOST_ONLY=1`. Point-LIO (Unitree's port) is the closest match to the L2 |
+| Simulation realism | Point `time` field added (instantaneous scans, so no deskew to test); still missing: sweep distortion, a noise model validated against the L2, closed-loop driving for loop-closure metrics |
 | Integration | Missing: LIO pose/velocity into `rover_ekf`, map → `odom` TF, obstacle output to the controller |
 
 **Recommended order:**

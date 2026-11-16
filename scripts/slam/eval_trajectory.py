@@ -7,6 +7,9 @@ Inputs
   --bag   the UNCOMPRESSED rosbag2 directory the estimate was computed from; it must contain
           /sim/ground_truth_poses (see ros2_ws/src/rover_description/launch/sim.launch.py)
   --model name of the rover in the simulator (default dave_rover)
+  --est-clock  'bag' (default): estimate timestamps are bag receive times (KISS-ICP's pipeline);
+               'sim': they are simulation time (header stamps, e.g. FAST-LIO's /Odometry written by
+               odom_to_tum.py); they are mapped to receive times through the bag's /clock messages
 
 A rosbag recorded with scripts/slam/record_bag.sh is zstd-compressed, which the `rosbags` Python
 library cannot read; convert it first (docs/slam/research-plan.md, E1):
@@ -49,6 +52,23 @@ def read_ground_truth(bag, model):
     return np.array(times), np.array(pos)
 
 
+def read_clock_map(bag):
+    """(sim_time, receive_time) pairs from the bag's /clock topic, both in seconds."""
+    from rosbags.highlevel import AnyReader
+    sim, recv = [], []
+    with AnyReader([Path(bag)]) as reader:
+        conns = [c for c in reader.connections if c.topic == '/clock']
+        if not conns:
+            sys.exit('--est-clock sim needs a /clock topic in the bag')
+        for conn, t, raw in reader.messages(connections=conns):
+            msg = reader.deserialize(raw, conn.msgtype)
+            sim.append(msg.clock.sec + msg.clock.nanosec * 1e-9)
+            recv.append(t * 1e-9)
+    sim, recv = np.array(sim), np.array(recv)
+    order = np.argsort(sim)
+    return sim[order], recv[order]
+
+
 def umeyama(src, dst):
     """Rigid transform (R, t) minimising |R src + t - dst|, no scale."""
     mu_s, mu_d = src.mean(0), dst.mean(0)
@@ -70,10 +90,15 @@ def main():
     ap.add_argument('--est', required=True)
     ap.add_argument('--bag', required=True)
     ap.add_argument('--model', default='dave_rover')
+    ap.add_argument('--est-clock', choices=('bag', 'sim'), default='bag')
     a = ap.parse_args()
 
     est = np.loadtxt(a.est)
     et, ep = est[:, 0], est[:, 1:4]
+    if a.est_clock == 'sim':
+        sim, recv = read_clock_map(a.bag)
+        inside = (et >= sim[0]) & (et <= sim[-1])
+        et, ep = np.interp(et[inside], sim, recv), ep[inside]
     gt_t, gt_p = read_ground_truth(a.bag, a.model)
 
     # ground truth sampled at the estimate's timestamps (linear interpolation)

@@ -8,6 +8,13 @@
 #
 # `slam_ws/` is listed in .gitignore. Pin each `version:` to a commit once chosen.
 repositories:
+  # FAST-LIO2, official ROS2 branch (HKU-MARS, GPL-2.0). Chosen for E1 because Point-LIO (official and
+  # Unitree's port) is ROS 1 only and DLIO's ROS 2 branch is stale. Use scripts/slam/fast_lio/setup.sh,
+  # which also supplies the livox_ros_driver2 message stub it needs. Cloned and audited 2026-11-15.
+  FAST_LIO:
+    type: git
+    url: https://github.com/hku-mars/FAST_LIO.git
+    version: cc3c9e8b1469b33b8072764d6db2348ed6dc597f
   # Official Unitree L2 SDK (C++, ROS 1 and ROS 2). ROS 2 package verified by the vendor
   # on Ubuntu 20.04 / Foxy only; expect to patch for Ubuntu 22.04 / Humble.
   unilidar_sdk2:
