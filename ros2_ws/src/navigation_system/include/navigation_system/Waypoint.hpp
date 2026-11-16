@@ -113,6 +113,8 @@ public:
         return false;
     }
 
+    static bool isHomeSet() { return homeIsSet; }
+
     static bool checkPassword(int password){
         if(Waypoint::password == password){
             return true;

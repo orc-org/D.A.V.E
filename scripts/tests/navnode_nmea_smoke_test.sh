@@ -2,7 +2,8 @@
 # End-to-end smoke test for NAVnode without any GNSS hardware.
 #
 # A virtual serial port pair (socat) feeds a fixed NMEA GGA sentence to NAVnode, which parses
-# it, converts it to ECEF/local coordinates and publishes NAVDisplayInfo. The test then sets
+# it, converts it to ECEF/local coordinates and publishes NAVDisplayInfo. It checks that a waypoint
+# is refused before any fix, the RMC speed, waypoint targeting and FollowRoute feedback. The test sets
 # the home waypoint at the same position through the ResetHome service and checks that the
 # local position becomes (almost) zero. It exercises the NMEA parser, the geodetic <-> ECEF <-> local
 # maths and the service names (docs/navigation.md, docs/known-issues.md).
@@ -56,6 +57,12 @@ for _ in $(seq 30); do
     timeout 5 ros2 service list 2>/dev/null | grep -q '^/ResetHome$' && break
     sleep 1
 done
+
+# Before any fix, a local waypoint must be refused (it used to set home silently to a meaningless point).
+timeout 15 ros2 service call /AddLocalWaypoint navigation_interfaces/srv/AddLocalWaypoint "{x: 1.0, y: 1.0}" >/dev/null 2>&1
+sleep 0.5
+grep -q "no GNSS fix yet" "$WORK/nav.log" && pass "waypoint before any fix is refused" \
+    || fail "waypoint before any fix was not refused (home may have been set silently)"
 
 # 51 deg 27.6 min N, 112 deg 42.0 min W  ==  51.46 N, 112.70 W
 # (The checksum field is fake: NAVnode does not validate it, gps_bridge_node.py does.)
@@ -114,6 +121,11 @@ if [ -n "$RNG" ] && awk -v v="$RNG" 'BEGIN { exit !(v > 9.0 && v < 11.0) }'; the
 else
     fail "added waypoint is not targeted: range2waypoint is ${RNG:-?} m, expected about 10"
 fi
+
+# FollowRoute is tracked by the node's timer (no thread): it must report progress towards that waypoint.
+FB="$(timeout 6 ros2 action send_goal --feedback /FollowRoute navigation_interfaces/action/NavigationAction "{}" 2>&1)"
+echo "$FB" | grep -q "Navigating to waypoint (10" && pass "FollowRoute reports progress to the target" \
+    || fail "FollowRoute gave no progress feedback: $(echo "$FB" | tail -3 | tr '\n' ' ')"
 
 [ "$FAILS" -eq 0 ] && echo "all checks passed" || echo "$FAILS check(s) failed"
 exit "$FAILS"

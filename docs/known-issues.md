@@ -57,6 +57,10 @@ Three groups: what was fixed while consolidating the repository, what is still o
 | | `vesc_can_driver_node` held the last command forever (no deadman), so a dropped link left the rover driving | `command_timeout` (0.5 s) stops a stale wheel immediately; per-message INFO logs in both drive nodes lowered |
 | | IMU `telemetry.py` fell back to synthetic data silently when the BNO085 or its libraries were missing, and repeated the last frame forever if the sensor died | Synthetic data only with `sim_mode:=true`; otherwise nothing is published, an error is logged and the connection is retried |
 | | `gps_bridge_node` labelled every fix `STATUS_FIX` with no covariance, passed on dead-reckoning (quality 6) fixes, published each epoch twice and was silent without a fix | Status from GGA quality, HDOP-based covariance (used by `rover_ekf`), explicit `STATUS_NO_FIX`, RMC only as a fallback ([navigation.md](navigation.md#gps_bridge_node-fix-status-and-covariance)) |
+| Base review (2026-11-15) | `motion_coordinator` could drive the rover in auto mode on a made-up base pose, published a second TF parent for `base_link`, and failed to start without matplotlib | Arm-only auto mode unless `allow_base_motion:=true`; EKF pose and `world → odom` when `/ekf/odometry` is fresh; lazy matplotlib import |
+| | `rover_ekf`: fixed `dt`, the same command fused twice, zero speed skipped, IMU yaw (north tare) used as ENU, origin always the first fix | Measured `dt`; `/motor/*` once, zero included; `imu_yaw_offset_deg`; `datum_*` parameters |
+| | IMU AUKF: orientation never corrected, gravity removed along body z regardless of tilt, drifting `/imu/odometry` on by default | Fuses the BNO085 quaternion; tilt-aware gravity; odometry opt-in |
+| | `NAVnode`: the add services set home silently (even without a fix); `FollowRoute` ran in a detached thread reading freed memory | Refused without a fix, warned with one; goal tracked by the timer |
 | Docs | `slam/architecture.md` gave the Unitree driver's frames as `lidar_link`/`lidar_imu_link` (those are the canonical names); the SDK uses `unilidar_lidar`/`unilidar_imu` | Corrected |
 
 ## 2. Open — needs measurement or a team decision
@@ -64,9 +68,9 @@ Three groups: what was fixed while consolidating the repository, what is still o
 1. **Trigger direction.** The ported `drive_node` makes the *left* trigger forward and the *right* trigger backward (the earlier firmware had them the other way). Confirm with whoever drives before the next field test.
 2. **Wheel radius.** `vesc_can_driver_node` defaults to 0.10 m but `physical_params.yaml` (and so the URDF/simulation) says 0.15 m. Commanded ground speed is off by 1.5× if the wrong one is used. Measure the real wheel.
 3. **Speed ceiling.** In metric mode the ERPM is not clamped to `max_erpm` (7000). A full-stick command (1.0 m/s) asks for ≈ 9549 ERPM. Decide whether to clamp.
-4. **Yaw convention.** `rover_ekf` assumes heading is counter-clockwise from east; the IMU tare sets "heading 0 = north". Verify which holds on the rover (see [state-estimation.md](state-estimation.md)).
-5. **Coordinate origins.** The EKF's origin is its first GPS fix; `NAVnode`'s is the home waypoint. They are not the same frame, and nothing reconciles them.
-6. **TF.** `motion_coordinator` and `rover_ekf` both publish a parent for `base_link` (`world` and `odom`). Do not run them together, or pick one.
+4. **Yaw convention.** `rover_ekf` now converts the north-tared IMU yaw to ENU (`imu_yaw_offset_deg` = 90). Check once on the rover that `/imu/euler` yaw increases on a left turn ([state-estimation.md](state-estimation.md#still-to-check-on-the-rover)).
+5. **Coordinate origins.** The EKF's origin is its first GPS fix unless `datum_latitude`/`datum_longitude` are set; set them to `NAVnode`'s home so both use one frame (nothing sets them automatically yet).
+6. **TF.** Resolved: with the EKF running, `motion_coordinator` publishes `world → odom` instead of a second parent for `base_link`.
 7. **Pin map.** Pin 37 (servo 2) is not in the device-tree overlay; pin 15 is in the overlay but no longer used; pin 32 is claimed by both the gripper STEP and the Morse servo test. Confirm the wiring (see [hardware.md](hardware.md)).
 8. **Arm step rate.** The step frequency is floored at 10 kHz, which makes the arm move at ≈ 0.785 rad/s rather than the nominal 0.5 rad/s unless the Arduino firmware limits it.
 9. **Battery gauge.** The dashboard subscribes to `/battery/status`, but `battery_monitor_node` (a BLE BMS reader that needed an uninstalled `battery` module) was deleted as deprecated in the cleanup. Either restore it with its dependency or remove the gauge.
@@ -88,13 +92,13 @@ Three groups: what was fixed while consolidating the repository, what is still o
 
 ## 3. Incomplete by design
 
-- **The navigation system cannot drive the rover.** `NAVnode` computes range and bearing to the next waypoint and advances through the route, but nothing converts that into `cmd_vel`. The `FollowRoute` action accepts any goal and does nothing. An operator, or new code, has to close the loop.
+- **The navigation system cannot drive the rover.** `NAVnode` computes range and bearing to the next waypoint and advances through the route, but nothing converts that into `cmd_vel`. The `FollowRoute` action restarts the followed route and reports progress until it is finished, but does not drive. An operator, or new code, has to close the loop.
 - **Obstacles are entered by hand.** There is no sensing of the environment (no lidar, depth camera or stereo), so avoidance only works against circles an operator typed in.
 - **Position is GNSS-only for navigation.** `NAVnode` does not use the EKF; with no GNSS fix it has no position.
 - **Detours are geometry, not planning.** See [navigation.md](navigation.md).
-- **The IMU filter's orientation is never corrected.** See [state-estimation.md](state-estimation.md).
-- **Arm control is simulated.** Auto mode runs inverse kinematics against a base pose integrated from wheel commands, not a measured pose; the stepper position is open loop. See [arm-and-kinematics.md](arm-and-kinematics.md).
-- **`move_to_point` and `FollowRoute` are stubs** that report success without waiting for the motion.
+- **The IMU filter's position is not usable** (body-frame double integration), so `/imu/odometry` is off by default; its orientation now follows the BNO085. See [state-estimation.md](state-estimation.md).
+- **Arm control is open loop.** Auto mode runs inverse kinematics against the EKF pose when `/ekf/odometry` is fresh (otherwise a pose integrated from wheel commands, for visualisation), and moves the arm only unless `allow_base_motion:=true`; the stepper position is open loop. See [arm-and-kinematics.md](arm-and-kinematics.md).
+- **`move_to_point` is a stub** that reports success without waiting for the motion.
 - **Tests.** There are lint tests only, plus the new coordinate-conversion test. Nothing exercises the C++ navigation, the EKF or the arm.
 
 ## 4. The missing layer: perception and SLAM

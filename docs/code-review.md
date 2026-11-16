@@ -26,8 +26,8 @@ Details are in [known-issues.md §1](known-issues.md#1-fixed-while-consolidating
 | Sev. | Finding | Where | Task impact |
 |---|---|---|---|
 | ~~Critical~~ Fixed | **No command timeout (deadman).** `vesc_can_driver_node` held the last target forever, so a dropped Wi-Fi link or a crashed dashboard left the rover driving. It now stops any wheel whose command is older than `command_timeout` (0.5 s), immediately and without ramping ([drive-system.md](drive-system.md)). Tested in WSL without a CAN bus: no stop while commands arrive at 10 Hz, and a stop after the publisher ends. | `drive_package/src/vesc_can_driver_node.cpp` | All tasks; required before any autonomy |
-| Critical | **`motion_coordinator` publishes `cmd_vel` in auto mode**, so the arm node can drive the rover. Its base pose is commands × 3.0, not a measurement. | `arm_controller/.../motion_coordinator_node.py` | All tasks; do not run auto mode on the real rover |
-| Major | `/cmd_vel` is normalised (−1…1) in this repo, but metric mode and the EKF treat it as m/s. Wheel radius 0.10 m (driver) vs 0.15 m (URDF). | `vesc_can_driver_node.cpp`, `rover_ekf` | Odometry and any controller tuning |
+| ~~Critical~~ Fixed | **`motion_coordinator` published `cmd_vel` in auto mode**, so the arm node could drive the rover on a base pose made up from commands × 3.0. Base motion now needs `allow_base_motion:=true`; otherwise auto mode moves the arm only. The base pose comes from `/ekf/odometry` when it is fresh. It also no longer imports matplotlib at load (the node failed where it is not installed) and skips a zero `dt`. Tested in WSL: auto mode published 0 `cmd_vel` messages. | `arm_controller/.../motion_coordinator_node.py` | All tasks |
+| Major | `/cmd_vel` is normalised (−1…1) in this repo; `vesc_can_driver_node` in metric mode turns 1.0 into 1 m/s. Wheel radius 0.10 m (driver) vs 0.15 m (URDF): measure the wheel. (The EKF no longer fuses `/cmd_vel` and scales `/motor/*` by `speed_per_motor_command`.) | `vesc_can_driver_node.cpp` | Odometry and any controller tuning |
 | Major | No VESC status readback, so no wheel odometry. VESC CAN status frames carry ERPM; read them. | `vesc_can_driver_node.cpp` | SLAM (wheel prior), Meteorite |
 | ~~Minor~~ Fixed | Both drive nodes logged at INFO on every message (20 Hz from `/joy`). Now DEBUG or throttled to 1 Hz. | `drive_node.cpp`, `vesc_can_driver_node.cpp` | Log noise on the Jetson |
 
@@ -35,19 +35,19 @@ Details are in [known-issues.md §1](known-issues.md#1-fixed-while-consolidating
 
 | Sev. | Finding | Where | Task impact |
 |---|---|---|---|
-| Major | **IMU AUKF double-integrates acceleration into position**, subtracts gravity in the body frame and never corrects orientation (gyro only). Its position and odometry outputs drift without bound; use only its orientation, or replace it with the BNO085's own fusion. | `IMU/imu/kalman_filter.py` | Meteorite (dead reckoning) |
+| ~~Major~~ Fixed (partly) | **IMU AUKF** never corrected orientation (gyro only) and subtracted gravity along body z regardless of tilt. It now fuses the BNO085's quaternion (unwrapped across ±180°) and removes gravity using roll/pitch. Its position/velocity are still body-frame double integrals, so `/imu/odometry` is now off by default (`publish_odometry:=true`). Tested in WSL: 10 s at rest on an 11.5° tilt gave 0.06 m/s residual velocity (about 2 m/s before). | `IMU/imu/kalman_filter.py` | Meteorite (dead reckoning) |
 | ~~Major~~ Fixed | **`telemetry.py` silently published synthetic data on `/imu/data_raw` when the hardware failed**, which looked like a working, level, stationary IMU. Synthetic data now needs `sim_mode:=true`; otherwise a missing library or sensor logs an error, publishes nothing and retries every 2 s, and a sensor that dies at run time stops publishing after about 1 s of failed reads ([state-estimation.md](state-estimation.md)). Tested in WSL (no libraries: 0 messages; `sim_mode:=true`: 11 Hz received; injected read failures: 19 repeats, then stop). | `IMU/imu/telemetry.py` | All autonomy |
-| Major | `rover_ekf` uses a fixed `dt` and wheel commands as measured speed (the GPS covariance is now taken from the message when present). Its origin is the first fix; NAVnode's is the home waypoint. | `rover_ekf/ekf_node.py` | Demolition, Reactor (geofence in the wrong frame) |
-| Major | Yaw conventions conflict: the EKF uses counter-clockwise from east (ENU), the IMU tare sets 0 = north, and CIRC bearings are from **true** north (magnetic declination is not applied anywhere). | EKF, `telemetry.py`, NAVnode | Bearings in Mining/Meteorite reports |
-| Major | Two TF parents for `base_link` (`world` from `motion_coordinator`, `odom` from `rover_ekf`). | both | Breaks RViz/Nav2 when run together |
+| ~~Major~~ Fixed | `rover_ekf` used a fixed `dt`, fused the same command twice (`/cmd_vel` and `/motor/*`) and skipped zero speed, and its origin was always the first fix. Now: measured `dt`, `/motor/*` only (scaled by `speed_per_motor_command`, zero included while fresh), optional `datum_latitude`/`datum_longitude` to share NAVnode's home. Still commands, not measured wheel speed (see VESC readback). | `rover_ekf/ekf_node.py` | Demolition, Reactor (geofence frame) |
+| ~~Major~~ Fixed (verify on rover) | Yaw conventions conflicted: the EKF is ENU (0 = east), the IMU tare sets 0 = north, so dead reckoning ran 90° off the GPS axes. `imu_yaw_offset_deg` (90) converts. True north depends on the tare being done facing true north (declination if a compass is used). The turn direction of `/imu/euler` must still be checked once on the rover ([state-estimation.md](state-estimation.md#still-to-check-on-the-rover)). | EKF, `telemetry.py` | Bearings in Mining/Meteorite reports |
+| ~~Major~~ Fixed | Two TF parents for `base_link` (`world` from `motion_coordinator`, `odom` from `rover_ekf`). With fresh `/ekf/odometry`, `motion_coordinator` now publishes `world → odom` (identity) instead, so the tree is `world → odom → base_link`; without the EKF it keeps `world → base_link` for the simulated view. | both | Broke RViz/Nav2 when run together |
 | ~~Major~~ Fixed | `gps_bridge_node` reported every fix as `STATUS_FIX` with no covariance, published GGA quality 6 (the receiver's dead-reckoning estimate) as a real fix, published each epoch twice (GGA, then RMC with altitude 0), and published nothing without a fix. Now: status from the GGA quality (FIX / SBAS / GBAS for RTK), an HDOP × UERE covariance, explicit `STATUS_NO_FIX` for quality 0 and 6, RMC only as a fallback; `rover_ekf` uses that covariance instead of its fixed 1.5 m², and the dashboard keeps the last good position on no fix ([navigation.md](navigation.md#gps_bridge_node-fix-status-and-covariance)). Tested in WSL with checksummed sentences; the UERE values are typical figures, not measured for this receiver. | `gps_bridge_node.py`, `ekf_node.py`, `dashboard/app.js` | EKF trusted invalid fixes |
 
 ### Navigation
 
 | Sev. | Finding | Where | Task impact |
 |---|---|---|---|
-| Critical | **No path follower.** Nothing turns range/bearing into `cmd_vel`; the `FollowRoute` action accepts any goal, does nothing, and races the timer on `currentPosition`. | `NAVnode.cpp` | Demolition (autonomous), any waypoint task |
-| Major | `addLocal*` silently sets home to the current position if home is unset. | `NAVnode.cpp` | Wrong frame without warning |
+| Critical | **No path follower.** Nothing turns range/bearing into `cmd_vel`. (The `FollowRoute` action's race is fixed: it used to run in a detached thread reading `currentPosition`, deleted every 200 ms, and route nodes the services could delete. The goal is now tracked by the node's timer on the executor thread and reports progress to the real target; it still does not drive.) | `NAVnode.cpp` | Demolition (autonomous), any waypoint task |
+| ~~Major~~ Fixed | The nine add-waypoint/obstacle services silently set home to the current position if home was unset, even before any fix. Now refused (logged) without a fix; with a fix, home is set to it with a warning. | `NAVnode.cpp` | Wrong frame without warning |
 | Major | The ResetHome password is a constant in the source. Fine for a team tool, not a security control. | `Waypoint.hpp` | — |
 | Major | `SerialPort::read()` is a raw read (≤ 256 bytes). NAVnode now buffers; other users of `SerialPort` must too. | `serial_communication` | — |
 | Major | No polygon geofence (Reactor Recovery storm sectors); obstacles are only circles typed in by hand. | — | Reactor Recovery |
@@ -76,7 +76,7 @@ Details are in [known-issues.md §1](known-issues.md#1-fixed-while-consolidating
 | GNSS-free localisation | Meteorite | LIO + wheel + IMU; `rover_ekf use_gps:=false` is the switch |
 | Emitter kill switch (lights, IR projectors of a depth camera, LiDAR?) | Prison Break high-security area | Check whether the chosen depth camera's IR projector counts as emitted light; the L2 LiDAR emits 905 nm |
 | Polygon geofence | Reactor Recovery | Point-in-polygon on the local frame, enforced in the controller |
-| True-north bearings | Mining, Meteorite reports | Apply declination to IMU yaw |
+| True-north bearings | Mining, Meteorite reports | Tare facing true north (`imu_yaw_offset_deg` then gives ENU); add the declination if a compass is used for the tare |
 | Offline dashboard | All | See above |
 | Mass budget (50 kg target) | All | Track LiDAR + camera + mounts |
 
@@ -95,7 +95,7 @@ Details are in [known-issues.md §1](known-issues.md#1-fixed-while-consolidating
 1. ~~Deadman timeout in the drive path~~ (done 2026-11-15).
 2. ~~Make `telemetry.py`'s synthetic fallback opt-in~~ and ~~fix `gps_bridge` status/covariance~~ (both done 2026-11-15). Still to do: record the receiver standing still for 10 min to set the UERE parameters.
 3. Add a per-point time field to the simulated cloud and build Point-LIO (needs permission), then run E1 against KISS-ICP.
-4. Fuse LIO into `rover_ekf` (E2), with one TF tree and one origin.
+4. Fuse LIO into `rover_ekf` (E2). The TF tree (`world → odom → base_link`) and the shared origin (`datum_*`) are in place since 2026-11-15.
 5. Pure-pursuit controller on NAVnode targets in simulation, then the ArUco node.
 6. Vendor dashboard assets; add the judge-click UI and the geofence.
 

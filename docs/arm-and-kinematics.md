@@ -54,17 +54,17 @@ It returns the total linear and angular change.
 
 $$ u_v = \operatorname{clip}\!\left(\frac{\Delta s}{\Delta t}, \pm 0.8\ \text{m/s}\right),\ \ u_\omega = \operatorname{clip}\!\left(\frac{\Delta\psi}{\Delta t}, \pm 1.0\ \text{rad/s}\right),\qquad c_k = \alpha\,u + (1-\alpha)\,c_{k-1},\ \ \alpha = 0.15 $$
 
-and published as `Twist` on `cmd_vel`. In manual mode the wrist angle integrates `/arm_manual_vel`.
+and published as `Twist` on `cmd_vel`, **only when `allow_base_motion:=true`** (default false since the 2026-11-15 review). Otherwise auto mode solves the IK for the arm alone (`move_base=False`, base pose restored afterwards) and publishes nothing on `cmd_vel`: the arm node used to be able to drive the rover on a made-up pose. Enable it only in simulation or with a real pose on `/ekf/odometry`. In manual mode the wrist angle integrates `/arm_manual_vel`.
 
-### Important limitation: simulated base pose
+### Base pose: measured when the EKF runs
 
-The base pose used by the IK is **not measured**. The node integrates it from the `/motor/*` wheel commands:
+When `/ekf/odometry` (parameter `odom_topic`) arrived less than 0.5 s ago, the base pose is taken from it, and the node publishes TF `world → odom` (identity) so that the tree is `world → odom → base_link` with `rover_ekf` owning `odom → base_link`. Otherwise the pose is **not measured**: the node integrates it from the `/motor/*` wheel commands and publishes `world → base_link` itself (it logs which mode it is in when it changes):
 
 $$ v = \frac{(fl+rl) + (fr+rr)}{4}\cdot 3,\quad \omega = \frac{(fr+rr) - (fl+rl)}{4}\cdot 3 $$
 
 $$ \psi \mathrel{+}= \omega\,\Delta t,\quad x \mathrel{+}= v\cos\psi\,\Delta t,\quad y \mathrel{+}= v\sin\psi\,\Delta t $$
 
-The factor 3 is a "visual simulation" scale, not a calibration. After each IK solve the base pose is restored, so it is only ever updated by this integration. The arm's "global position" and the auto-mode behaviour therefore describe a simulated rover, not the GPS/EKF pose. The node also loads `matplotlib` for an optional debug plot (`show_plot` parameter).
+The factor 3 is a "visual simulation" scale, not a calibration. After each IK solve the base pose is restored, so it is only ever updated by this integration. In this mode the arm's "global position" describes a simulated rover, not the GPS/EKF pose. `matplotlib` is loaded only for the optional debug plot (`show_plot` parameter); it used to be imported at start-up, so the node failed wherever matplotlib was not installed.
 
 ### Actions and services
 

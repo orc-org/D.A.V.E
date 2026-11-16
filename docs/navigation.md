@@ -120,7 +120,9 @@ It is a reactive geometric patch, not a planner: no costs, no kinodynamics, no g
 - Settings: `ResetHome` (requires the password in `Waypoint::password`, currently hard-coded), `ToggleDebug`, `TogglePreference`, `ToggleCircumnavigationStyle`.
 - Raw GNSS pass-through: `SendToGNSS`, `ReadFromGNSS`.
 
-Action: `FollowRoute` accepts and cancels any goal but does not execute anything (see known issues).
+Action: `FollowRoute` restarts the followed route from its first waypoint (in the current direction) and is tracked by the 5 Hz main timer: feedback once a second with the target, the rover position and the distance; success when the route is finished (or immediately if it is empty); a new goal aborts the previous one; cancel is honoured. It does **not** drive the rover (see known issues). It used to run in a detached thread that read memory the timer freed every 200 ms.
+
+**Home and the add services.** All add-waypoint/obstacle services need home, because local coordinates are relative to it. If home is not set and there is no GNSS fix yet, the request is ignored and an error is logged (the services return no status). With a fix, home is set to the current position and a warning is logged; call `ResetHome` to choose it explicitly. (They used to set home silently, even before any fix.)
 
 Topic: `NAVDisplayInfo` (`navigation_interfaces/DisplayInfo`) carries rover and waypoint positions in all three systems, `heading`, `bearing2waypoint`, `range2waypoint`, speed and the current preference/route selection.
 

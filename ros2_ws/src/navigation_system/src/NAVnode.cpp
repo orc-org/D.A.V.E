@@ -882,6 +882,7 @@ void NAVnode::mainTimer(){
             if (nextWaypoint == nullptr) routeFinished = true;   // do not start the route again by itself
         }
     }
+    updateFollowRouteGoal();
 
     if (debug){
         // debug mode will print the current value for all our variables to the ros terminal thatt the navigation node is active in
@@ -975,6 +976,7 @@ void NAVnode::updatePositonData(){
 
 
     if (currentPosition != nullptr && havePosition && latitude != 0.0 && longitude != 0.0) {
+        hasFix = true;
         delete currentPosition;
         currentPosition = new Waypoint(longitude, latitude, altitude, true); // constructor order is (longitude, latitude, altitude)
     } else if (currentPosition == nullptr) {
@@ -1231,6 +1233,22 @@ void NAVnode::resetHome(const std::shared_ptr<ResetHome::Request> request, std::
     delete point;
 }
 
+bool NAVnode::ensureHome(){
+    // Local coordinates are relative to home. The add services used to set home silently to the current
+    // position whenever it was unset, even before any fix (home then became a meaningless point).
+    if (Waypoint::isHomeSet()) return true;
+    if (!hasFix || currentPosition == nullptr) {
+        RCLCPP_ERROR(this->get_logger(), "Home is not set and there is no GNSS fix yet: request ignored. "
+                                         "Call ResetHome first, or wait for a fix.");
+        return false;
+    }
+    currentPosition->setHome(currentPosition, 0);
+    RCLCPP_WARN(this->get_logger(), "Home was not set: it is now the current position (lat %.7f, lon %.7f). "
+                                    "Call ResetHome to choose it explicitly.",
+                currentPosition->getLatitude(), currentPosition->getLongitude());
+    return true;
+}
+
 void NAVnode::clearRoute(const std::shared_ptr<VoidService::Request> request, std::shared_ptr<VoidService::Response> response){
     routes[routeToEdit].clear();
     if (routeToEdit == routeToFollow) { nextWaypoint = nullptr; routeFinished = false; }
@@ -1238,13 +1256,13 @@ void NAVnode::clearRoute(const std::shared_ptr<VoidService::Request> request, st
 
 void NAVnode::addLocalWaypoint(const std::shared_ptr<AddLocalWaypoint::Request> request, 
                                 std::shared_ptr<AddLocalWaypoint::Response> response){
-    currentPosition->setHome(currentPosition, 0); // ensure home is set
+    if (!ensureHome()) return;   // was a silent setHome(currentPosition), even with no fix
     routes[routeToEdit].add(new Waypoint(request->x, request->y));
 }
 
 void NAVnode::addLocalWaypointAtIndex(const std::shared_ptr<AddLocalWaypointAtIndex::Request> request, 
                                         std::shared_ptr<AddLocalWaypointAtIndex::Response> response){
-    currentPosition->setHome(currentPosition, 0); // ensure home is set
+    if (!ensureHome()) return;   // was a silent setHome(currentPosition), even with no fix
     routes[routeToEdit].add(new Waypoint(request->x, request->y), request->index);
 }
 
@@ -1252,7 +1270,7 @@ void NAVnode::addLocalObstacle(const std::shared_ptr<AddLocalObstacle::Request> 
                                 std::shared_ptr<AddLocalObstacle::Response> response){
     (void)response;
 
-    currentPosition->setHome(currentPosition, 0); // ensure home is set
+    if (!ensureHome()) return;   // was a silent setHome(currentPosition), even with no fix
 
     // check if the array of obstacles is full
     if (obstacleCount == obstacleLimit){
@@ -1285,13 +1303,13 @@ void NAVnode::addLocalObstacle(const std::shared_ptr<AddLocalObstacle::Request> 
 
 void NAVnode::addGeodeticWaypoint(const std::shared_ptr<AddGeodeticWaypoint::Request> request, 
                                     std::shared_ptr<AddGeodeticWaypoint::Response> response){
-    currentPosition->setHome(currentPosition, 0); // ensure home is set
+    if (!ensureHome()) return;   // was a silent setHome(currentPosition), even with no fix
     routes[routeToEdit].add(new Waypoint(request->longitude, request->latitude, request->altitude, true));
 }
 
 void NAVnode::addGeodeticWaypointAtIndex(const std::shared_ptr<AddGeodeticWaypointAtIndex::Request> request, 
                                             std::shared_ptr<AddGeodeticWaypointAtIndex::Response> response){
-    currentPosition->setHome(currentPosition, 0); // ensure home is set
+    if (!ensureHome()) return;   // was a silent setHome(currentPosition), even with no fix
     routes[routeToEdit].add(new Waypoint(request->longitude, request->latitude, request->altitude, true), request->index);
 }
 
@@ -1299,7 +1317,7 @@ void NAVnode::addGeodeticObstacle(const std::shared_ptr<AddGeodeticObstacle::Req
                                     request, std::shared_ptr<AddGeodeticObstacle::Response> response){
     (void)response;
 
-    currentPosition->setHome(currentPosition, 0); // ensure home is set
+    if (!ensureHome()) return;   // was a silent setHome(currentPosition), even with no fix
 
     // check if the array of obstacles is full
     if (obstacleCount == obstacleLimit){
@@ -1333,13 +1351,13 @@ void NAVnode::addGeodeticObstacle(const std::shared_ptr<AddGeodeticObstacle::Req
 
 void NAVnode::addEarthCentredWaypoint(const std::shared_ptr<AddEarthCentredWaypoint::Request> request, 
                                         std::shared_ptr<AddEarthCentredWaypoint::Response> response){
-    currentPosition->setHome(currentPosition, 0); // ensure home is set
+    if (!ensureHome()) return;   // was a silent setHome(currentPosition), even with no fix
     routes[routeToEdit].add(new Waypoint(request->x, request->y, request->z, false));
 }
 
 void NAVnode::addEarthCentredWaypointAtIndex(const std::shared_ptr<AddEarthCentredWaypointAtIndex::Request> request, 
                                                 std::shared_ptr<AddEarthCentredWaypointAtIndex::Response> response){
-    currentPosition->setHome(currentPosition, 0); // ensure home is set
+    if (!ensureHome()) return;   // was a silent setHome(currentPosition), even with no fix
     routes[routeToEdit].add(new Waypoint(request->x, request->y, request->z, false), request->index);
 }
 
@@ -1347,7 +1365,7 @@ void NAVnode::addEarthCentredObstacle(const std::shared_ptr<AddEarthCentredObsta
                                         std::shared_ptr<AddEarthCentredObstacle::Response> response){
     (void)response;
 
-    currentPosition->setHome(currentPosition, 0); // ensure home is set
+    if (!ensureHome()) return;   // was a silent setHome(currentPosition), even with no fix
 
     // check if the array of obstacles is full
     if (obstacleCount == obstacleLimit){
@@ -1492,63 +1510,59 @@ rclcpp_action::CancelResponse NAVnode::followRoute_Cancel(const std::shared_ptr<
 }
 
 void NAVnode::followRoute_Accepted(const std::shared_ptr<NAVGoalHandle> goal_handle){
-    // this needs to return quickly, lest we block the executor, so we spin up a new thread
-    std::thread{std::bind(&NAVnode::followRoute_Execute, this, _1), goal_handle}.detach();
+    // The goal used to run in a detached thread that read currentPosition (deleted and replaced every
+    // 200 ms by the timer) and route nodes (deletable by the remove services) with no locking. It is now
+    // tracked by mainTimer() on the executor thread, using the same target and arrival logic as the node.
+    // NOTE: the action reports progress only; nothing here drives the rover.
+    if (activeGoal && activeGoal->is_active()) {
+        auto result = std::make_shared<NAVaction::Result>();
+        result->success = "Superseded by a new FollowRoute goal";
+        activeGoal->abort(result);
+    }
+    activeGoal = goal_handle;
+    goalFeedbackTicks = 0;
+    routeFinished = false;
+    nextWaypoint = nullptr;   // validateTarget() starts the followed route from its first waypoint
 }
 
-void NAVnode::followRoute_Execute(const std::shared_ptr<NAVGoalHandle> goal_handle){
-    // actual method that executes the action
-    rclcpp::Rate loop_rate(1);
-    auto feedback = std::make_shared<NAVaction::Feedback>();
+void NAVnode::updateFollowRouteGoal(){
+    if (!activeGoal) return;
+    if (!activeGoal->is_active()) { activeGoal.reset(); return; }
+
     auto result = std::make_shared<NAVaction::Result>();
-
-    ListNode* current = routes[routeToFollow].getHead();
-    int count = 0;
-    const double arrivalThreshold = 1.0; // arrival tolerance in meters
-
-    if (current == nullptr) {
-        feedback->progress = "Route is empty. Standing by at current position.";
-        goal_handle->publish_feedback(feedback);
-        loop_rate.sleep();
+    if (activeGoal->is_canceling()) {
+        result->success = "Navigation Prematurely Terminated";
+        activeGoal->canceled(result);
+        activeGoal.reset();
+        return;
+    }
+    if (routes[routeToFollow].getHead() == nullptr) {
         result->success = "Route is empty. No waypoints to follow.";
-        goal_handle->succeed(result);
+        activeGoal->succeed(result);
+        activeGoal.reset();
+        return;
+    }
+    if (routeFinished) {
+        result->success = "great success";
+        activeGoal->succeed(result);
+        activeGoal.reset();
         return;
     }
 
-    while(current != nullptr && rclcpp::ok()){
-        if (goal_handle->is_canceling()){
-            result->success = "Navigation Prematurely Terminated";
-            goal_handle->canceled(result);
-            return;
-        }
-
-        // calculate the distance from rover's currentPosition to current target waypoint
-        double dx = currentPosition->getX() - current->point->getX();
-        double dy = currentPosition->getY() - current->point->getY();
-        double distance = std::sqrt(dx * dx + dy * dy);
-
-        std::stringstream ss;
-        ss << "Navigating to Waypoint " << (count + 1)
-           << " [Target: (" << current->point->getX() << ", " << current->point->getY() 
+    if (++goalFeedbackTicks % 5 != 0) return;   // feedback at 1 Hz (timer runs at 5 Hz)
+    auto feedback = std::make_shared<NAVaction::Feedback>();
+    std::stringstream ss;
+    if (nextWaypoint != nullptr && nextWaypoint->point != nullptr && currentPosition != nullptr) {
+        double dx = nextWaypoint->point->getX() - currentPosition->getX();
+        double dy = nextWaypoint->point->getY() - currentPosition->getY();
+        ss << "Navigating to waypoint (" << nextWaypoint->point->getX() << ", " << nextWaypoint->point->getY()
            << ") | Current: (" << currentPosition->getX() << ", " << currentPosition->getY()
-           << ") | Dist: " << std::fixed << std::setprecision(2) << distance << "m]";
-        
-        feedback->progress = ss.str();
-        goal_handle->publish_feedback(feedback);
-
-        // advance to next waypoint once within arrival threshold distance
-        if (distance <= arrivalThreshold) {
-            count++;
-            current = current->next;
-        }
-
-        loop_rate.sleep();
+           << ") | Dist: " << std::fixed << std::setprecision(2) << std::sqrt(dx * dx + dy * dy) << " m";
+    } else {
+        ss << "Waiting for a target waypoint";
     }
-
-    if(rclcpp::ok()){
-        result->success = "great success";
-        goal_handle->succeed(result);
-    }
+    feedback->progress = ss.str();
+    activeGoal->publish_feedback(feedback);
 }
 
 //////////////////////////////////////////////////////////////////////////

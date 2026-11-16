@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import math
+import time
 import numpy as np
 import rclpy
 from rclpy.node import Node
@@ -59,6 +60,23 @@ class RoverEKFNode(Node):
         # not even subscribed, so a stale or stray fix cannot leak into the pose.
         self.declare_parameter('use_gps', True)
         self.use_gps = bool(self.get_parameter('use_gps').value)
+        # /imu/euler yaw is counter-clockwise with 0 wherever ~/calibrate was called ("true north" by the
+        # team's procedure); the state uses ENU (0 = east). theta = imu_yaw + offset, so 90 for a north tare.
+        # (It used to be taken as ENU directly, putting dead reckoning 90 degrees off the GPS axes.)
+        self.declare_parameter('imu_yaw_offset_deg', 90.0)
+        # Wheel speed comes from the /motor/* COMMANDS (there is no encoder or VESC feedback yet), scaled to
+        # m/s: 1.0 for vesc_can_driver in metric mode (1.0 = 1 m/s), 1.5 for the simulator's sim_drive_bridge.
+        self.declare_parameter('speed_per_motor_command', 1.0)
+        # /cmd_vel is a command, not a measurement, and was fused in addition to /motor/* (double counting)
+        self.declare_parameter('fuse_cmd_vel', False)
+        # Local frame origin. NaN = the first GPS fix. Set it to NAVnode's home waypoint so both share a frame.
+        self.declare_parameter('datum_latitude', float('nan'))
+        self.declare_parameter('datum_longitude', float('nan'))
+        self.imu_yaw_offset = math.radians(float(self.get_parameter('imu_yaw_offset_deg').value))
+        self.speed_per_command = float(self.get_parameter('speed_per_motor_command').value)
+        self.fuse_cmd_vel = bool(self.get_parameter('fuse_cmd_vel').value)
+        datum_lat = float(self.get_parameter('datum_latitude').value)
+        datum_lon = float(self.get_parameter('datum_longitude').value)
 
         self.freq = float(self.get_parameter('frequency').value)
         self.dt = 1.0 / max(self.freq, 1.0)
@@ -87,6 +105,8 @@ class RoverEKFNode(Node):
 
         # Sensor inputs
         self.gps_origin = None  # (lat0, lon0, alt0)
+        if math.isfinite(datum_lat) and math.isfinite(datum_lon):
+            self.gps_origin = (datum_lat, datum_lon, 0.0)
         self.last_imu_roll = 0.0
         self.last_imu_pitch = 0.0
 
@@ -104,9 +124,11 @@ class RoverEKFNode(Node):
             )
         else:
             self.get_logger().warn("use_gps is false: GNSS is NOT fused (position is dead reckoning only).")
-        self.sub_cmd_vel = self.create_subscription(
-            Twist, self.topic_cmd_vel, self.cmd_vel_callback, 10
-        )
+        self.sub_cmd_vel = None
+        if self.fuse_cmd_vel:
+            self.sub_cmd_vel = self.create_subscription(
+                Twist, self.topic_cmd_vel, self.cmd_vel_callback, 10
+            )
 
         # Motor velocity subscriptions for direct wheel odometry
         self.sub_fl_motor = self.create_subscription(Float32, '/motor/front_left', self.fl_motor_cb, 10)
@@ -115,6 +137,8 @@ class RoverEKFNode(Node):
         self.sub_rr_motor = self.create_subscription(Float32, '/motor/rear_right', self.rr_motor_cb, 10)
 
         self.fl_v, self.fr_v, self.rl_v, self.rr_v = 0.0, 0.0, 0.0, 0.0
+        self.last_motor_time = None          # monotonic time of the last /motor/* message
+        self.last_predict_time = time.monotonic()
 
         # Publishers & TF Broadcaster
         self.pub_odom = self.create_publisher(Odometry, self.topic_ekf_odom, 10)
@@ -129,16 +153,16 @@ class RoverEKFNode(Node):
             f"Fusing Wheel Odometry, IMU ({self.topic_imu_euler}), and GPS ({self.topic_gps_fix})."
         )
 
-    def fl_motor_cb(self, msg): self.fl_v = msg.data
-    def fr_motor_cb(self, msg): self.fr_v = msg.data
-    def rl_motor_cb(self, msg): self.rl_v = msg.data
-    def rr_motor_cb(self, msg): self.rr_v = msg.data
+    def fl_motor_cb(self, msg): self.fl_v = msg.data; self.last_motor_time = time.monotonic()
+    def fr_motor_cb(self, msg): self.fr_v = msg.data; self.last_motor_time = time.monotonic()
+    def rl_motor_cb(self, msg): self.rl_v = msg.data; self.last_motor_time = time.monotonic()
+    def rr_motor_cb(self, msg): self.rr_v = msg.data; self.last_motor_time = time.monotonic()
 
     def imu_euler_callback(self, msg: Vector3):
         """Measurement update for IMU Orientation (Yaw, Roll, Pitch)."""
         self.last_imu_roll = math.radians(msg.x)
         self.last_imu_pitch = math.radians(msg.y)
-        imu_yaw_rad = math.radians(msg.z)
+        imu_yaw_rad = wrap_angle_rad(math.radians(msg.z) + self.imu_yaw_offset)   # to ENU
 
         # Update theta_yaw only. (This used to add the state's own omega as a second "measurement":
         # zero innovation, but it still shrank P and made the filter over-confident in omega.)
@@ -227,34 +251,42 @@ class RoverEKFNode(Node):
 
     def timer_ekf_loop(self):
         """EKF Prediction Step & State Output Loop."""
-        # Calculate wheel odometry forward speed from motor feedback if active
-        wheel_speed = ((self.fl_v + self.rl_v) + (self.fr_v + self.rr_v)) * 0.25  # mean of the four wheels
-        if abs(wheel_speed) > 1e-4:
-            self.update_wheel_odometry(wheel_speed)
+        # Measured step: timers jitter and stall under load, and a fixed 1/frequency step then
+        # mis-scales every motion. Clamped so one long stall cannot throw the pose far.
+        now_mono = time.monotonic()
+        dt = min(max(now_mono - self.last_predict_time, 0.0), 0.5)
+        self.last_predict_time = now_mono
+
+        # Wheel speed from the motor commands while they are fresh (same 0.5 s as the drive deadman).
+        # Zero is information too: it used to be skipped, so a stopped rover kept coasting on v.
+        if self.last_motor_time is not None and now_mono - self.last_motor_time < 0.5:
+            command = ((self.fl_v + self.rl_v) + (self.fr_v + self.rr_v)) * 0.25  # mean of the four wheels
+            self.update_wheel_odometry(command * self.speed_per_command)
 
         # EKF State Prediction: f(x_k, dt)
         X, Y, theta, v, omega = self.x[0], self.x[1], self.x[2], self.x[3], self.x[4]
-        
+
         # Position updated along heading theta
-        X_next = X + v * math.cos(theta) * self.dt
-        Y_next = Y + v * math.sin(theta) * self.dt
-        theta_next = wrap_angle_rad(theta + omega * self.dt)
-        v_next = v * 0.98  # slight velocity damping
-        omega_next = omega * 0.98
+        X_next = X + v * math.cos(theta) * dt
+        Y_next = Y + v * math.sin(theta) * dt
+        theta_next = wrap_angle_rad(theta + omega * dt)
+        decay = 0.98 ** (dt / self.dt)   # slight velocity damping, 0.98 per nominal step
+        v_next = v * decay
+        omega_next = omega * decay
 
         self.x = np.array([X_next, Y_next, theta_next, v_next, omega_next])
 
         # State Transition Jacobian Matrix F (5x5)
         F = np.array([
-            [1.0, 0.0, -v * math.sin(theta) * self.dt, math.cos(theta) * self.dt, 0.0],
-            [0.0, 1.0,  v * math.cos(theta) * self.dt, math.sin(theta) * self.dt, 0.0],
-            [0.0, 0.0, 1.0, 0.0, self.dt],
-            [0.0, 0.0, 0.0, 0.98, 0.0],
-            [0.0, 0.0, 0.0, 0.0, 0.98]
+            [1.0, 0.0, -v * math.sin(theta) * dt, math.cos(theta) * dt, 0.0],
+            [0.0, 1.0,  v * math.cos(theta) * dt, math.sin(theta) * dt, 0.0],
+            [0.0, 0.0, 1.0, 0.0, dt],
+            [0.0, 0.0, 0.0, decay, 0.0],
+            [0.0, 0.0, 0.0, 0.0, decay]
         ])
 
-        # Covariance Prediction: P = F * P * F^T + Q
-        self.P = F @ self.P @ F.T + self.Q
+        # Covariance Prediction: P = F * P * F^T + Q, with Q tuned per nominal step and scaled by the real step
+        self.P = F @ self.P @ F.T + self.Q * (dt / self.dt)
 
         # Publish Fused EKF Outputs
         now = self.get_clock().now().to_msg()

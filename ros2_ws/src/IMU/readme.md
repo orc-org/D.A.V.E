@@ -88,7 +88,8 @@ Below is the complete list of all topics published by the package, their message
 - `angular_velocity_covariance` ($3 \times 3$ covariance matrix from UKF)
 - `orientation_covariance` ($3 \times 3$ covariance matrix from UKF)
 
-#### 2. `/imu/odometry` (`nav_msgs/msg/Odometry`)
+#### 2. `/imu/odometry` (`nav_msgs/msg/Odometry`), only with `publish_odometry:=true`
+> Off by default: position and velocity are acceleration integrated twice in the body frame and drift without bound. Not for navigation.
 - `pose.pose.position` (Estimated position in meters)
   - `pose.pose.position.x` $\rightarrow$ `ros2 topic echo /imu/odometry --field pose.pose.position.x`
   - `pose.pose.position.y` $\rightarrow$ `ros2 topic echo /imu/odometry --field pose.pose.position.y`

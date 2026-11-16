@@ -100,6 +100,9 @@ private:
     std::string gnssBuffer;     // serial bytes kept across timer ticks, so a sentence split between two reads is not lost
     double lastSpeed = 0.0;     // km/h, held until the next RMC/VTG sentence
     double lastHeading = 0.0;   // rad, course over ground, held until the next RMC/VTG sentence
+    bool hasFix = false;        // true once a valid GNSS position has been parsed
+    std::shared_ptr<NAVGoalHandle> activeGoal;   // the FollowRoute goal being tracked, if any
+    int goalFeedbackTicks = 0;
 
     int obstacleCount;          // keeps track of how many obstacles are currently stored in the system 
     int obstacleLimit;          // maximum number of obstacles that can be stored in the system
@@ -460,7 +463,11 @@ rclcpp_action::CancelResponse followRoute_Cancel(const std::shared_ptr<NAVGoalHa
 
 void followRoute_Accepted(const std::shared_ptr<NAVGoalHandle> goal_handle);
 
-void followRoute_Execute(const std::shared_ptr<NAVGoalHandle> goal_handle);
+// reports progress of / completes the active FollowRoute goal; called by mainTimer() (no extra thread)
+void updateFollowRouteGoal();
+
+// true if home is set, or could be set to the current fix (logged); false (logged) if there is no fix yet
+bool ensureHome();
 
 };
 

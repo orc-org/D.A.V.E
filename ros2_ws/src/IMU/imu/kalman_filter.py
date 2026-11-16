@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-import time
 import numpy as np
 from pykalman import AdditiveUnscentedKalmanFilter
 
@@ -16,6 +15,7 @@ try:
     from adafruit_bno08x import (
         BNO_REPORT_ACCELEROMETER,
         BNO_REPORT_GYROSCOPE,
+        BNO_REPORT_ROTATION_VECTOR,
     )
     from adafruit_bno08x.i2c import BNO08X_I2C
     ADAFRUIT_AVAILABLE = True
@@ -64,6 +64,13 @@ class KalmanFilterNode(Node):
         self.declare_parameter('use_direct_sensor', False)
         self.declare_parameter('i2c_bus', 7)
         self.declare_parameter('i2c_address', 0x4A)
+        # The position/velocity states are acceleration integrated twice in the body frame: they drift
+        # without bound within seconds and are not usable for navigation, so /imu/odometry is opt-in.
+        self.declare_parameter('publish_odometry', False)
+        # Correct roll/pitch/yaw with the BNO085's own fused orientation (the quaternion in /imu/data_raw).
+        # Without it the filter only integrated the gyro, so its orientation drifted without bound.
+        self.declare_parameter('use_orientation', True)
+        self.declare_parameter('orientation_variance', 0.01)   # rad^2
 
         # get parameter values
         self.dt = float(self.get_parameter('dt').value)
@@ -78,13 +85,21 @@ class KalmanFilterNode(Node):
         self.use_direct_sensor = bool(self.get_parameter('use_direct_sensor').value)
         self.i2c_bus_num = int(self.get_parameter('i2c_bus').value)
         self.i2c_address = int(self.get_parameter('i2c_address').value)
+        self.publish_odometry = bool(self.get_parameter('publish_odometry').value)
+        self.use_orientation = bool(self.get_parameter('use_orientation').value)
+        self.orientation_variance = float(self.get_parameter('orientation_variance').value)
 
         # build aukf filter parameters matching original specification
         self._init_kalman_filter()
 
         # publishers
         self.pub_filtered_imu = self.create_publisher(Imu, self.topic_filtered_imu, 10)
-        self.pub_odom = self.create_publisher(Odometry, self.topic_odom, 10)
+        self.pub_odom = None
+        if self.publish_odometry:
+            self.pub_odom = self.create_publisher(Odometry, self.topic_odom, 10)
+            self.get_logger().warn(
+                f"publish_odometry is true: '{self.topic_odom}' is double-integrated acceleration and drifts "
+                "without bound. Do not use it for navigation.")
         self.pub_filtered_euler = self.create_publisher(Vector3, self.topic_filtered_euler, 10)
 
         # subscriber for raw imu data
@@ -115,9 +130,13 @@ class KalmanFilterNode(Node):
         dt = self.dt
         new_state = np.copy(state)
 
-        # gravity compensation on acceleration (subtracting 9.81 m/s^2 along z axis)
-        accel_motion = np.copy(state[6:9])
-        accel_motion[2] -= 9.81
+        # gravity compensation: gravity expressed in the body frame from roll/pitch. (It used to subtract
+        # 9.81 along body z only, so any tilt leaked 9.81*sin(tilt) into the horizontal acceleration.)
+        roll, pitch = state[9], state[10]
+        gravity_body = 9.81 * np.array([-np.sin(pitch),
+                                        np.sin(roll) * np.cos(pitch),
+                                        np.cos(roll) * np.cos(pitch)])
+        accel_motion = state[6:9] - gravity_body
 
         # apply velocity damping factor (e.g. 0.95) to prevent unbounded velocity crawl from sensor bias
         velocity_damped = state[3:6] * self.velocity_damping
@@ -132,15 +151,20 @@ class KalmanFilterNode(Node):
         return new_state
 
     def observation_function(self, state):
-        """observation function mapping 15d state to 6d measurement [accel, gyro]."""
+        """observation function mapping 15d state to [accel, gyro] or [accel, gyro, roll, pitch, yaw]."""
         accel_part = state[6:9]
         gyro_part = state[12:15]
+        if self.use_orientation:
+            return np.concatenate([accel_part, gyro_part, state[9:12]])
         return np.concatenate([accel_part, gyro_part])
 
     def _init_kalman_filter(self):
         """initialize the additive unscented kalman filter matrices and state."""
         self.transition_covariance = np.eye(15) * self.process_noise
-        self.observation_covariance = np.diag([1.0, 1.0, 1.0, 0.04, 0.04, 0.04])
+        obs_var = [1.0, 1.0, 1.0, 0.04, 0.04, 0.04]
+        if self.use_orientation:
+            obs_var += [self.orientation_variance] * 3
+        self.observation_covariance = np.diag(obs_var)
         self.initial_state_mean = np.zeros(15)
         # initialize accel_z to 9.81 so initial state matches rest gravity
         self.initial_state_mean[8] = 9.81
@@ -169,17 +193,27 @@ class KalmanFilterNode(Node):
             self.bno = BNO08X_I2C(i2c, address=self.i2c_address)
             self.bno.enable_feature(BNO_REPORT_ACCELEROMETER)
             self.bno.enable_feature(BNO_REPORT_GYROSCOPE)
+            self.bno.enable_feature(BNO_REPORT_ROTATION_VECTOR)
             self.get_logger().info(f"Direct sensor mode connected to BNO085 on bus {self.i2c_bus_num}.")
         except Exception as e:
             self.get_logger().error(f"Failed direct sensor connection: {e}")
             self.bno = None
 
-    def process_observation(self, accel: np.ndarray, gyro: np.ndarray, timestamp=None):
-        """step the unscented kalman filter with an incoming 6d observation [accel, gyro]."""
-        observation = np.concatenate([accel, gyro])
+    def process_observation(self, accel: np.ndarray, gyro: np.ndarray, timestamp=None, euler=None):
+        """step the unscented kalman filter with an observation [accel, gyro] (+ [roll, pitch, yaw] in rad)."""
+        if self.use_orientation:
+            if euler is None:
+                return   # no orientation (direct-sensor mode reads no quaternion): nothing consistent to fuse
+            # unwrap each measured angle to within pi of the state, so 179 deg -> -179 deg is a 2 deg step
+            cur = self.current_mean[9:12]
+            euler = cur + (np.asarray(euler) - cur + np.pi) % (2.0 * np.pi) - np.pi
+            observation = np.concatenate([accel, gyro, euler])
+        else:
+            observation = np.concatenate([accel, gyro])
         self.current_mean, self.current_cov = self.aukf.filter_update(
             self.current_mean, self.current_cov, observation
         )
+        self.current_mean[9:12] = (self.current_mean[9:12] + np.pi) % (2.0 * np.pi) - np.pi
         self.publish_filtered_data(timestamp)
 
     def raw_imu_callback(self, msg: Imu):
@@ -194,7 +228,15 @@ class KalmanFilterNode(Node):
             msg.angular_velocity.y,
             msg.angular_velocity.z
         ])
-        self.process_observation(accel, gyro, msg.header.stamp)
+        euler = None
+        q = msg.orientation
+        if q.x * q.x + q.y * q.y + q.z * q.z + q.w * q.w > 1e-6:
+            # ZYX roll/pitch/yaw, the same convention as telemetry.py (this is the untared BNO085 frame)
+            roll = np.arctan2(2.0 * (q.w * q.x + q.y * q.z), 1.0 - 2.0 * (q.x * q.x + q.y * q.y))
+            pitch = np.arcsin(np.clip(2.0 * (q.w * q.y - q.z * q.x), -1.0, 1.0))
+            yaw = np.arctan2(2.0 * (q.w * q.z + q.x * q.y), 1.0 - 2.0 * (q.y * q.y + q.z * q.z))
+            euler = np.array([roll, pitch, yaw])
+        self.process_observation(accel, gyro, msg.header.stamp, euler)
 
     def timer_direct_sensor_callback(self):
         """timer callback for reading directly from hardware if enabled."""
@@ -202,7 +244,13 @@ class KalmanFilterNode(Node):
             try:
                 accel = np.array(self.bno.acceleration)
                 gyro = np.array(self.bno.gyro)
-                self.process_observation(accel, gyro, self.get_clock().now().to_msg())
+                qi, qj, qk, qr = self.bno.quaternion
+                euler = np.array([
+                    np.arctan2(2.0 * (qr * qi + qj * qk), 1.0 - 2.0 * (qi * qi + qj * qj)),
+                    np.arcsin(np.clip(2.0 * (qr * qj - qk * qi), -1.0, 1.0)),
+                    np.arctan2(2.0 * (qr * qk + qi * qj), 1.0 - 2.0 * (qj * qj + qk * qk)),
+                ])
+                self.process_observation(accel, gyro, self.get_clock().now().to_msg(), euler)
             except Exception as e:
                 self.get_logger().error(f"Error reading direct sensor: {e}")
 
@@ -247,7 +295,10 @@ class KalmanFilterNode(Node):
 
         self.pub_filtered_imu.publish(filtered_imu)
 
-        # 2. publish odometry
+        # 2. publish odometry (opt-in, see publish_odometry)
+        if self.pub_odom is None:
+            self._publish_euler(euler_deg)
+            return
         odom = Odometry()
         odom.header.stamp = stamp
         odom.header.frame_id = self.odom_frame_id
@@ -283,7 +334,9 @@ class KalmanFilterNode(Node):
         odom.twist.covariance = twist_cov.flatten().tolist()
 
         self.pub_odom.publish(odom)
+        self._publish_euler(euler_deg)
 
+    def _publish_euler(self, euler_deg):
         # 3. publish filtered euler angles (in degrees)
         euler_vec = Vector3()
         euler_vec.x = float(euler_deg[0])
