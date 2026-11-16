@@ -22,9 +22,11 @@ It publishes: `/cmd_vel`, `/arm_target`, `/auto_mode`, `/arm_manual_vel`, `/grip
 
 Driving from the browser works by publishing `/cmd_vel`, which `drive_node` mixes into wheel commands. A browser gamepad (Gamepad API) can also drive; sensitivity is applied in the browser, so `drive_node`'s own `/sensitivity` and `/control_mode` topics are not used by this dashboard.
 
-### Dependencies loaded from the internet
+### Dependencies: served locally (works offline)
 
-`index.html` loads `roslib`, `eventemitter2`, `three`, `ros3d` (jsDelivr), Leaflet (unpkg) and a Google font at page load. The base-station laptop therefore needs internet access, or these files must be vendored into `dashboard/`. The Leaflet map also loads OpenStreetMap tiles from the internet.
+`roslib` 1.4.1, `eventemitter2` 6.4.9, `three` 0.89.0, `ros3d` 0.17.0, Leaflet 1.9.4 and the Outfit font are committed in [`dashboard/vendor/`](../dashboard/vendor/README.md), pinned and checked against the SHA-256 that jsDelivr publishes for each version (`dashboard/vendor/fetch.sh --verify`). They used to be loaded from jsDelivr, unpkg and Google Fonts, so a base station without internet got a blank dashboard; `roslib` was the floating `@1`.
+
+Map tiles: the map uses `dashboard/tiles/{z}/{x}/{y}.png` when `dashboard/tiles/tiles.json` exists, and online OpenStreetMap tiles otherwise (with the attribution OSM requires, which was hidden). Offline with no tile folder, the map is blank but the rover marker, track and click-to-target still work. How to prepare a tile folder legitimately (OSM's tile servers forbid bulk downloads) is in the vendor README. Tested in the browser: with a tile folder, the page made no request outside the local server.
 
 ## `dashboard_helper` — process manager
 

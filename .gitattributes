@@ -9,3 +9,10 @@
 *.png binary
 *.mp3 binary
 *.dtbo binary
+*.woff2 binary
+# Vendored dashboard libraries must stay byte-identical to the published files (fetch.sh --verify checks
+# their SHA-256), so git must never convert their line endings
+dashboard/vendor/** -text
+dashboard/vendor/fetch.sh text eol=lf
+dashboard/vendor/README.md text
+dashboard/vendor/fonts.css text

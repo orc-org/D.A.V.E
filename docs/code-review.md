@@ -57,7 +57,7 @@ Details are in [known-issues.md §1](known-issues.md#1-fixed-while-consolidating
 
 | Sev. | Finding | Where | Task impact |
 |---|---|---|---|
-| Major | **Needs the internet**: Google Fonts, jsdelivr (roslib, three, ros3d), unpkg (Leaflet) and online map tiles. A field site without uplink gets a blank dashboard. Vendor the scripts into the repo and pre-cache tiles. | `dashboard/index.html` | All tasks |
+| ~~Major~~ Fixed (tiles: prepare per site) | **Needed the internet**: Google Fonts, jsDelivr (roslib, three, ros3d), unpkg (Leaflet) and online map tiles, so a field site without uplink got a blank dashboard. All libraries and the font are now vendored in `dashboard/vendor/` (pinned, roslib was the floating `@1`; hash-checked by `fetch.sh`). Map tiles come from `dashboard/tiles/` when present, else online OSM (attribution restored). Tested in the browser: no request outside the local server. The competition-area tiles still have to be prepared ([vendor README](../dashboard/vendor/README.md#map-tiles)). | `dashboard/` | All tasks |
 | Major | rosbridge is unauthenticated, and `dashboard_helper` starts and kills processes through unauthenticated services. Keep the rover network closed. | `dashboard/`, `dashboard_helper` | — |
 | Major | No judge-click target UI (Demolition: judges pick targets on a map). | — | Demolition |
 
@@ -77,7 +77,7 @@ Details are in [known-issues.md §1](known-issues.md#1-fixed-while-consolidating
 | Emitter kill switch (lights, IR projectors of a depth camera, LiDAR?) | Prison Break high-security area | Check whether the chosen depth camera's IR projector counts as emitted light; the L2 LiDAR emits 905 nm |
 | Polygon geofence | Reactor Recovery | Point-in-polygon on the local frame, enforced in the controller |
 | True-north bearings | Mining, Meteorite reports | Tare facing true north (`imu_yaw_offset_deg` then gives ENU); add the declination if a compass is used for the tare |
-| Offline dashboard | All | See above |
+| Offline map tiles for the site | All | Libraries are local; prepare `dashboard/tiles/` for the competition area |
 | Mass budget (50 kg target) | All | Track LiDAR + camera + mounts |
 
 ## SLAM status

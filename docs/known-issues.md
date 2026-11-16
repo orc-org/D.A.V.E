@@ -77,7 +77,7 @@ Three groups: what was fixed while consolidating the repository, what is still o
 9. **Battery gauge.** The dashboard subscribes to `/battery/status`, but `battery_monitor_node` (a BLE BMS reader that needed an uninstalled `battery` module) was deleted as deprecated in the cleanup. Either restore it with its dependency or remove the gauge.
 10. **Shared serial ports.** `gps_bridge_node`, `NAVnode` and `morse_bridge_node` all default to `/dev/ttyUSB0`. Assign stable device names.
 11. **Licences.** The repository is MIT. Several packages still declare Apache-2.0 and many maintainer emails are placeholders (`@todo.todo`, `@example.com`). Decide on one licence.
-12. **Dashboard needs the internet** (CDN scripts, map tiles) and rosbridge is unauthenticated.
+12. **Dashboard map tiles and rosbridge.** The libraries are now local, but offline map tiles for the competition site must be prepared into `dashboard/tiles/` ([dashboard/vendor/README.md](../dashboard/vendor/README.md#map-tiles)). rosbridge is unauthenticated.
 13. **Script findings left open** (need the hardware or a design decision):
     - `test_dm556y_steppers.py` drives pins 15 (STEP) and 13 (DIR); its docstring says 15 and 7, the arm node uses 33/18 and the gripper 32/13. Confirm the wiring before running it.
     - `NAVnode` writes `captains log <date>.txt` into `src/navigation_system/captainsLogs` **relative to the current directory**, so the location depends on where the node was started.

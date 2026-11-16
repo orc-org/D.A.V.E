@@ -2551,12 +2551,23 @@ function initLeafletMap() {
     try {
         leafletMap = L.map('leaflet-map', {
             zoomControl: true,
-            attributionControl: false
+            attributionControl: true   // OpenStreetMap's licence requires the attribution (it was hidden)
         }).setView([initLat, initLon], 18);
 
-        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-            maxZoom: 19
-        }).addTo(leafletMap);
+        // Map tiles: a local tile folder (dashboard/tiles/{z}/{x}/{y}.png, prepared before the competition,
+        // see dashboard/vendor/README.md) is used when present; otherwise online OpenStreetMap tiles.
+        // Without either the map is blank, but the rover marker, track and click-to-target still work.
+        const addTiles = (url, maxZoom, attribution, note) => {
+            L.tileLayer(url, { maxZoom: maxZoom, attribution: attribution }).addTo(leafletMap);
+            console.log('Map tiles: ' + note);
+        };
+        fetch('tiles/tiles.json', { cache: 'no-store' })
+            .then(r => r.ok ? r.json() : Promise.reject())
+            .then(info => addTiles('tiles/{z}/{x}/{y}.png', info.maxZoom || 19, info.attribution || '',
+                                   'local folder dashboard/tiles'))
+            .catch(() => addTiles('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', 19,
+                                  '&copy; OpenStreetMap contributors',
+                                  'online OpenStreetMap (blank without internet)'));
 
         const roverIcon = L.divIcon({
             className: 'custom-rover-marker',

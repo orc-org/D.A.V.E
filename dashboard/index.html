@@ -7,9 +7,9 @@
     <meta http-equiv="Pragma" content="no-cache">
     <meta http-equiv="Expires" content="0">
     <title>D.A.V.E. Rover Command Center</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;800&display=swap" rel="stylesheet">
+    <!-- All libraries and fonts are served from dashboard/vendor (pinned, hash-checked; see vendor/README.md),
+         so the dashboard works on a rover network with no internet. Only map tiles may come from online. -->
+    <link rel="stylesheet" href="vendor/fonts.css">
     <script>
         // Diagnostic error logging directly inside the page viewport
         window.addEventListener('error', function(e) {
@@ -81,10 +81,10 @@
         })();
     </script>
     <link rel="stylesheet" href="style.css">
-    <!-- EventEmitter2 & ROSlibJS & ThreeJS & ROS3DJS CDNs -->
-    <script src="https://cdn.jsdelivr.net/npm/eventemitter2@6.4.9/lib/eventemitter2.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/roslib@1/build/roslib.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/three@0.89.0/build/three.min.js"></script>
+    <!-- EventEmitter2 & ROSlibJS & ThreeJS & ROS3DJS (local copies; roslib was "@1", now pinned to 1.4.1) -->
+    <script src="vendor/eventemitter2@6.4.9/lib/eventemitter2.js"></script>
+    <script src="vendor/roslib@1.4.1/build/roslib.min.js"></script>
+    <script src="vendor/three@0.89.0/build/three.min.js"></script>
     <script>
         // Polyfill EventDispatcher.apply for compatibility between Three.js >= r84 and ros3djs
         if (typeof THREE !== 'undefined' && THREE.EventDispatcher && !THREE.EventDispatcher.prototype.apply) {
@@ -96,10 +96,10 @@
             };
         }
     </script>
-    <script src="https://cdn.jsdelivr.net/npm/ros3d@0.17.0/build/ros3d.min.js"></script>
+    <script src="vendor/ros3d@0.17.0/build/ros3d.min.js"></script>
     <!-- Leaflet CSS & JS for Interactive Location Map -->
-    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <link rel="stylesheet" href="vendor/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="vendor/leaflet@1.9.4/dist/leaflet.js"></script>
 </head>
 <body>
     <div class="dashboard-container">
