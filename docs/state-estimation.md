@@ -66,7 +66,7 @@ $Q = \operatorname{diag}(0.05, 0.05, 0.01, 0.1, 0.05)$. The 0.98 factors are a d
 | IMU yaw (`/imu/euler`, degrees → rad) | $[\theta_{imu},\ \omega]$ | rows selecting $\theta$ and $\omega$ | $\operatorname{diag}(0.01, 0.005)$ |
 | IMU yaw rate (`/imu/data_raw`) | $\omega_z$ | selects $\omega$ | 0.005 |
 | Wheel speed (`/motor/*` mean, or `cmd_vel.linear.x`) | $v_{wheel}$ | selects $v$ | 0.08 |
-| GPS (`/gps/fix`) | $[x_{east}, y_{north}]$ | selects $X, Y$ | $\operatorname{diag}(1.5, 1.5)$ |
+| GPS (`/gps/fix`) | $[x_{east}, y_{north}]$ | selects $X, Y$ | the message's east/north variances when `position_covariance_type` is not UNKNOWN (from `gps_bridge_node`: $(\text{HDOP} \cdot \text{UERE})^2$), otherwise $\operatorname{diag}(1.5, 1.5)$; messages with `status < 0` (no fix) are ignored |
 
 Notes on the inputs:
 

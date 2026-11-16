@@ -213,7 +213,14 @@ class RoverEKFNode(Node):
             [0, 1, 0, 0, 0]
         ])
         y = z - H @ self.x
-        S = H @ self.P @ H.T + self.R_gps
+        # Use the receiver's covariance when the bridge provides one (from HDOP and fix quality), so an
+        # RTK fix is trusted more than a standalone one; otherwise the fixed R_gps.
+        R = self.R_gps
+        if msg.position_covariance_type != NavSatFix.COVARIANCE_TYPE_UNKNOWN:
+            var_e, var_n = msg.position_covariance[0], msg.position_covariance[4]
+            if var_e > 0.0 and var_n > 0.0 and np.isfinite(var_e) and np.isfinite(var_n):
+                R = np.diag([var_e, var_n])
+        S = H @ self.P @ H.T + R
         K = self.P @ H.T @ np.linalg.inv(S)
         self.x = self.x + K @ y
         self.P = (np.eye(5) - K @ H) @ self.P

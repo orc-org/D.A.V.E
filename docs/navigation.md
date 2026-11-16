@@ -130,4 +130,18 @@ Topic: `NAVDisplayInfo` (`navigation_interfaces/DisplayInfo`) carries rover and 
 
 ## Two GPS paths
 
+### gps_bridge_node: fix status and covariance
+
+Only GGA sentences (checksum verified) produce fixes, because only GGA carries the fix quality, HDOP and altitude. RMC is used only if no GGA has arrived for 2 s; such a fix has an unknown covariance and altitude 0.
+
+| GGA quality | `status.status` | Horizontal σ |
+|---|---|---|
+| 1 (single point) | `STATUS_FIX` (0) | HDOP × `uere_standalone_m` (2.5) |
+| 2 (DGPS/SBAS) | `STATUS_SBAS_FIX` (1) | HDOP × `uere_dgps_m` (1.0) |
+| 5 (RTK float) | `STATUS_GBAS_FIX` (2) | HDOP × `uere_rtk_float_m` (0.3) |
+| 4 (RTK fixed) | `STATUS_GBAS_FIX` (2) | HDOP × `uere_rtk_fixed_m` (0.02) |
+| 0 (none), 6 (dead reckoning), other | `STATUS_NO_FIX` (−1), position 0, 0 | — |
+
+The covariance is diagonal with variance σ² east and north and (2σ)² up, type `COVARIANCE_TYPE_APPROXIMATED`. The UERE (user-equivalent range error) defaults are typical figures, not measurements of this receiver; to calibrate, record it standing still and set UERE so that HDOP × UERE matches the observed horizontal standard deviation. Consumers must check `status` before using the position (no-fix messages carry 0, 0, not NaN, because rosbridge cannot send NaN to the browser).
+
 `NAVnode` opens the GNSS receiver itself (parameters `gnss_port` default `/dev/ttyUSB0`, `gnss_baudrate` default 38400) and parses NMEA internally. `gps_bridge_node` independently opens the same default port and publishes `/gps/fix`. Run only one at a time unless they are given different ports.

@@ -2176,11 +2176,15 @@ function setupGPSROSInterfaces() {
     });
     gpsFixSub.subscribe((msg) => {
         if (msg && msg.latitude !== undefined && msg.longitude !== undefined) {
-            gpsCurrentFix.latitude = msg.latitude;
-            gpsCurrentFix.longitude = msg.longitude;
-            gpsCurrentFix.altitude = msg.altitude || 0.0;
             gpsCurrentFix.status = (msg.status && msg.status.status !== undefined) ? msg.status.status : 0;
             gpsCurrentFix.lastUpdate = Date.now();
+            // gps_bridge now publishes STATUS_NO_FIX (-1) with a 0,0 position when there is no fix:
+            // keep the last good position instead of jumping the map to 0,0
+            if (gpsCurrentFix.status >= 0) {
+                gpsCurrentFix.latitude = msg.latitude;
+                gpsCurrentFix.longitude = msg.longitude;
+                gpsCurrentFix.altitude = msg.altitude || 0.0;
+            }
 
             if (!gpsHomeOrigin.isSet && gpsCurrentFix.status >= 0) {
                 gpsHomeOrigin.latitude = msg.latitude;

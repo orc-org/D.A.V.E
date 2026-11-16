@@ -37,10 +37,10 @@ Details are in [known-issues.md §1](known-issues.md#1-fixed-while-consolidating
 |---|---|---|---|
 | Major | **IMU AUKF double-integrates acceleration into position**, subtracts gravity in the body frame and never corrects orientation (gyro only). Its position and odometry outputs drift without bound; use only its orientation, or replace it with the BNO085's own fusion. | `IMU/imu/kalman_filter.py` | Meteorite (dead reckoning) |
 | ~~Major~~ Fixed | **`telemetry.py` silently published synthetic data on `/imu/data_raw` when the hardware failed**, which looked like a working, level, stationary IMU. Synthetic data now needs `sim_mode:=true`; otherwise a missing library or sensor logs an error, publishes nothing and retries every 2 s, and a sensor that dies at run time stops publishing after about 1 s of failed reads ([state-estimation.md](state-estimation.md)). Tested in WSL (no libraries: 0 messages; `sim_mode:=true`: 11 Hz received; injected read failures: 19 repeats, then stop). | `IMU/imu/telemetry.py` | All autonomy |
-| Major | `rover_ekf` uses a fixed `dt`, a fixed GPS covariance (ignores `NavSatFix` covariance) and wheel commands as measured speed. Its origin is the first fix; NAVnode's is the home waypoint. | `rover_ekf/ekf_node.py` | Demolition, Reactor (geofence in the wrong frame) |
+| Major | `rover_ekf` uses a fixed `dt` and wheel commands as measured speed (the GPS covariance is now taken from the message when present). Its origin is the first fix; NAVnode's is the home waypoint. | `rover_ekf/ekf_node.py` | Demolition, Reactor (geofence in the wrong frame) |
 | Major | Yaw conventions conflict: the EKF uses counter-clockwise from east (ENU), the IMU tare sets 0 = north, and CIRC bearings are from **true** north (magnetic declination is not applied anywhere). | EKF, `telemetry.py`, NAVnode | Bearings in Mining/Meteorite reports |
 | Major | Two TF parents for `base_link` (`world` from `motion_coordinator`, `odom` from `rover_ekf`). | both | Breaks RViz/Nav2 when run together |
-| Major | `gps_bridge_node` always reports `STATUS_FIX` with no covariance, even without a fix. | `gps_bridge_node.py` | EKF trusts invalid fixes |
+| ~~Major~~ Fixed | `gps_bridge_node` reported every fix as `STATUS_FIX` with no covariance, published GGA quality 6 (the receiver's dead-reckoning estimate) as a real fix, published each epoch twice (GGA, then RMC with altitude 0), and published nothing without a fix. Now: status from the GGA quality (FIX / SBAS / GBAS for RTK), an HDOP × UERE covariance, explicit `STATUS_NO_FIX` for quality 0 and 6, RMC only as a fallback; `rover_ekf` uses that covariance instead of its fixed 1.5 m², and the dashboard keeps the last good position on no fix ([navigation.md](navigation.md#gps_bridge_node-fix-status-and-covariance)). Tested in WSL with checksummed sentences; the UERE values are typical figures, not measured for this receiver. | `gps_bridge_node.py`, `ekf_node.py`, `dashboard/app.js` | EKF trusted invalid fixes |
 
 ### Navigation
 
@@ -93,7 +93,7 @@ Details are in [known-issues.md §1](known-issues.md#1-fixed-while-consolidating
 **Recommended order:**
 
 1. ~~Deadman timeout in the drive path~~ (done 2026-11-15).
-2. ~~Make `telemetry.py`'s synthetic fallback opt-in~~ (done 2026-11-15); fix `gps_bridge` status/covariance.
+2. ~~Make `telemetry.py`'s synthetic fallback opt-in~~ and ~~fix `gps_bridge` status/covariance~~ (both done 2026-11-15). Still to do: record the receiver standing still for 10 min to set the UERE parameters.
 3. Add a per-point time field to the simulated cloud and build Point-LIO (needs permission), then run E1 against KISS-ICP.
 4. Fuse LIO into `rover_ekf` (E2), with one TF tree and one origin.
 5. Pure-pursuit controller on NAVnode targets in simulation, then the ArUco node.
