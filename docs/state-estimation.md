@@ -77,12 +77,13 @@ $Q = \operatorname{diag}(0.05, 0.05, 0.01, 0.1, 0.05)$ per nominal step. The dam
 |---|---|---|---|
 | IMU yaw (`/imu/euler`, degrees → rad, + `imu_yaw_offset_deg`) | $\theta_{imu}$ | selects $\theta$ | 0.01 |
 | IMU yaw rate (`/imu/data_raw`) | $\omega_z$ | selects $\omega$ | 0.005 |
-| Wheel speed (`/motor/*` mean × `speed_per_motor_command`, while a command arrived < 0.5 s ago, zero included) | $v_{wheel}$ | selects $v$ | 0.08 |
+| Measured wheel speed (`/wheel_states` from VESC ERPM: mean wheel rad/s × `wheel_radius`, at least 2 wheels, fresh < 0.3 s) | $v_{wheel}$ | selects $v$ | 0.02 |
+| Otherwise commanded wheel speed (`/motor/*` mean × `speed_per_motor_command`, while a command arrived < 0.5 s ago, zero included) | $v_{wheel}$ | selects $v$ | 0.08 |
 | GPS (`/gps/fix`) | $[x_{east}, y_{north}]$ | selects $X, Y$ | the message's east/north variances when `position_covariance_type` is not UNKNOWN (from `gps_bridge_node`: $(\text{HDOP} \cdot \text{UERE})^2$), otherwise $\operatorname{diag}(1.5, 1.5)$; messages with `status < 0` (no fix) are ignored |
 
 Notes on the inputs:
 
-- **Wheel speed** is the mean of the four `/motor/*` values, $(fl + rl + fr + rr)/4$, scaled by `speed_per_motor_command`. These are **commands**, not measurements (there is no encoder or VESC feedback yet), so wheel slip and a stalled motor are invisible. A zero command is fused too (it used to be skipped, so a stopped rover kept coasting on $v$); once commands are older than 0.5 s (the drive deadman), nothing is fused.
+- **Wheel speed** is the mean of the four `/motor/*` values, $(fl + rl + fr + rr)/4$, scaled by `speed_per_motor_command`. These are **commands**, used only when no measured speed is available: with the VESCs' CAN status enabled, `/wheel_states` (see [drive-system.md](drive-system.md)) replaces them, so a stalled motor shows up; wheel slip is still invisible to both. `wheel_radius` (default 0.10, the driver's default) must be set to the measured wheel. A zero command is fused too (it used to be skipped, so a stopped rover kept coasting on $v$); once commands are older than 0.5 s (the drive deadman), nothing is fused.
 - **GPS** uses `datum_latitude`/`datum_longitude` as the origin, or the first valid fix if they are not set (then the origin is *not* NAVnode's home waypoint), and an equirectangular approximation with Earth radius $R_E$ = 6 371 000 m: $x_{east} = \Delta\lambda\,R_E\cos\varphi_0$, $y_{north} = \Delta\varphi\,R_E$, with deltas in radians. Fixes with status < 0, NaN, or both coordinates ≈ 0 are ignored.
 - **Output**: `Odometry` (position and heading; 6×6 pose covariance filled from $P$ for $X,Y,\theta$ only), Euler angles in degrees (roll/pitch passed straight through from the IMU), and the `odom → base_link` TF.
 

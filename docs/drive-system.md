@@ -57,6 +57,14 @@ Subscribes to the four `/motor/*` topics, ramps each command toward its target, 
 
 **Deadman (`command_timeout`, default 0.5 s).** A wheel whose last command is older than this is set to zero at once, without ramping, and a warning is logged. Every command source must therefore publish continuously: the dashboard sends `/cmd_vel` at 10 Hz in manual mode and `joy_node` repeats at 20 Hz by default, while a node that publishes only on change will be stopped after 0.5 s. The wheels also stay stopped until the first command arrives. The timeout uses a steady clock, so it is unaffected by simulation time. `command_timeout:=0` disables it (bench tests only). The simulator's `sim_drive_bridge` has equivalent 0.3 s / 0.5 s timeouts.
 
+**Measured wheel speed (`/wheel_states`).** Each loop the driver also reads the VESCs' CAN STATUS frames (packet 9, extended ID $(9 \ll 8) \,|\, \text{id}$; 8 bytes big-endian: int32 ERPM, int16 current × 10, int16 duty × 1000) and publishes `sensor_msgs/JointState` on `/wheel_states` with the joint names `front_left_wheel_joint` … `rear_right_wheel_joint`:
+
+$$ \omega_{wheel} = \frac{\text{ERPM}}{p \cdot G}\cdot\frac{2\pi}{60}\ \text{rad/s},\qquad \text{effort} = \text{motor current (A)} $$
+
+with $p$ = `pole_pairs`, $G$ = `gear_ratio`. A wheel without a STATUS frame for `status_timeout` (0.5 s) is left out; with none reporting, nothing is published. `rover_ekf` turns it into forward speed with its own `wheel_radius` (mean of the reporting wheels × radius) and prefers it over the commands.
+
+Rover set-up (not done in code): in VESC Tool, enable **CAN status message STATUS 1** on every VESC (for example at 50 Hz). Check the sign once: drive forward slowly and every `/wheel_states` velocity must be positive. A VESC whose motor direction is inverted in its configuration may report the opposite sign. Tested on a virtual CAN bus in WSL only (ERPM 9549 → 10.0 rad/s → EKF 0.98 m/s).
+
 ### Ramp limiting
 
 Each tick the commanded value may change by at most

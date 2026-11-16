@@ -61,6 +61,7 @@ Three groups: what was fixed while consolidating the repository, what is still o
 | | `rover_ekf`: fixed `dt`, the same command fused twice, zero speed skipped, IMU yaw (north tare) used as ENU, origin always the first fix | Measured `dt`; `/motor/*` once, zero included; `imu_yaw_offset_deg`; `datum_*` parameters |
 | | IMU AUKF: orientation never corrected, gravity removed along body z regardless of tilt, drifting `/imu/odometry` on by default | Fuses the BNO085 quaternion; tilt-aware gravity; odometry opt-in |
 | | `NAVnode`: the add services set home silently (even without a fix); `FollowRoute` ran in a detached thread reading freed memory | Refused without a fix, warned with one; goal tracked by the timer |
+| | No wheel speed feedback: the EKF fused motor commands as if measured | `vesc_can_driver_node` reads VESC CAN STATUS frames → `/wheel_states`; `rover_ekf` prefers it (enable CAN status on the VESCs) |
 | Docs | `slam/architecture.md` gave the Unitree driver's frames as `lidar_link`/`lidar_imu_link` (those are the canonical names); the SDK uses `unilidar_lidar`/`unilidar_imu` | Corrected |
 
 ## 2. Open — needs measurement or a team decision

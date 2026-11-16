@@ -25,7 +25,7 @@ EXTRA_TOPICS="${EXTRA_TOPICS:-}"
 
 # Rover topics that already exist in this repository (see docs/architecture.md).
 ROVER_TOPICS="/imu/data_raw /imu/euler /gps/fix /gps/nmea_raw \
-/motor/front_left /motor/front_right /motor/rear_left /motor/rear_right \
+/motor/front_left /motor/front_right /motor/rear_left /motor/rear_right /wheel_states \
 /cmd_vel /ekf/odometry /ekf/filtered_euler /joint_states /tf /tf_static"
 
 if ! command -v ros2 >/dev/null 2>&1; then

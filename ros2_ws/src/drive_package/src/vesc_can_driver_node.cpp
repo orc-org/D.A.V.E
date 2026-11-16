@@ -1,5 +1,7 @@
 #include "rclcpp/rclcpp.hpp"
 #include "std_msgs/msg/float32.hpp"
+#include "sensor_msgs/msg/joint_state.hpp"
+#include <array>
 #include <string>
 #include <vector>
 #include <algorithm>
@@ -31,6 +33,11 @@ public:
         // The dashboard publishes at 10 Hz and joy_node repeats at 20 Hz, so 0.5 s is several missed messages.
         // Without it, a dropped link or a crashed publisher left the rover driving its last command. <= 0 disables.
         this->declare_parameter<double>("command_timeout", 0.5);
+        // Measured wheel speed: each VESC's CAN STATUS frame (packet 9: ERPM, current, duty) is read back and
+        // published on /wheel_states (sensor_msgs/JointState; velocity = wheel rad/s, effort = motor current A).
+        // The VESCs must have "CAN Status Message" STATUS 1 enabled in VESC Tool (e.g. 50 Hz).
+        // A wheel with no status frame for status_timeout seconds is left out of the message.
+        this->declare_parameter<double>("status_timeout", 0.5);
 
         // CAN IDs for the 4 wheels
         this->declare_parameter<int>("fl_can_id", 53);
@@ -53,6 +60,7 @@ public:
         ramp_rate_ = this->get_parameter("ramp_rate").as_double();
         publish_rate_ = this->get_parameter("publish_rate").as_double();
         command_timeout_ = this->get_parameter("command_timeout").as_double();
+        status_timeout_ = this->get_parameter("status_timeout").as_double();
 
         wheel_radius_ = this->get_parameter("wheel_radius").as_double();
         pole_pairs_ = this->get_parameter("pole_pairs").as_int();
@@ -107,6 +115,8 @@ public:
                 target_rr_ = std::max(-1.0f, std::min(1.0f, msg->data));
                 last_rr_ = steady_.now();
             });
+
+        wheel_state_pub_ = this->create_publisher<sensor_msgs::msg::JointState>("/wheel_states", 10);
 
         // periodic CAN transmit & ramping loop
         double timer_sec = 1.0 / publish_rate_;
@@ -199,8 +209,62 @@ private:
         }
     }
 
+    // Drain the (non-blocking) socket and keep the latest STATUS frame of each wheel.
+    // STATUS (CAN_PACKET_STATUS = 9), extended ID = (9 << 8) | vesc_id, 8 bytes big-endian:
+    //   int32 ERPM, int16 current x10 (A), int16 duty x1000
+    void readStatusFrames()
+    {
+        if (can_socket_ == -1) return;
+        struct can_frame frame;
+        const int ids[4] = {fl_can_id_, fr_can_id_, rl_can_id_, rr_can_id_};
+        for (int n = 0; n < 200; ++n)   // bounded: 4 VESCs at 50 Hz is ~4 frames per 20 ms loop
+        {
+            ssize_t got = read(can_socket_, &frame, sizeof(frame));
+            if (got < static_cast<ssize_t>(sizeof(frame))) break;   // EAGAIN (nothing left) or short read
+            if (!(frame.can_id & CAN_EFF_FLAG) || frame.can_dlc < 8) continue;
+            uint32_t id = frame.can_id & CAN_EFF_MASK;
+            if (((id >> 8) & 0xFF) != 9) continue;
+            int vesc_id = static_cast<int>(id & 0xFF);
+            for (int w = 0; w < 4; ++w)
+            {
+                if (ids[w] != vesc_id) continue;
+                const uint8_t *d = frame.data;
+                int32_t erpm = static_cast<int32_t>((uint32_t(d[0]) << 24) | (uint32_t(d[1]) << 16) |
+                                                    (uint32_t(d[2]) << 8) | uint32_t(d[3]));
+                int16_t current_x10 = static_cast<int16_t>((uint16_t(d[4]) << 8) | uint16_t(d[5]));
+                status_erpm_[w] = erpm;
+                status_current_[w] = current_x10 / 10.0;
+                status_time_[w] = steady_.now();
+                status_seen_[w] = true;
+            }
+        }
+    }
+
+    void publishWheelStates()
+    {
+        static const char *names[4] = {"front_left_wheel_joint", "front_right_wheel_joint",
+                                       "rear_left_wheel_joint", "rear_right_wheel_joint"};
+        // wheel angular speed (rad/s) = ERPM / (pole pairs * gear ratio) * 2 pi / 60
+        const double rad_s_per_erpm = 2.0 * M_PI / 60.0 / (static_cast<double>(pole_pairs_) * gear_ratio_);
+        const rclcpp::Time now = steady_.now();
+        sensor_msgs::msg::JointState js;
+        for (int w = 0; w < 4; ++w)
+        {
+            if (!status_seen_[w] || (now - status_time_[w]).seconds() > status_timeout_) continue;
+            js.name.push_back(names[w]);
+            js.velocity.push_back(status_erpm_[w] * rad_s_per_erpm);
+            js.effort.push_back(status_current_[w]);
+        }
+        if (js.name.empty()) return;   // no VESC is reporting: publish nothing rather than zeros
+        js.header.stamp = this->get_clock()->now();
+        wheel_state_pub_->publish(js);
+    }
+
     void updateLoop()
     {
+        readStatusFrames();
+        publishWheelStates();
+
         double dt = 1.0 / publish_rate_;
         double max_change = ramp_rate_ * dt;
 
@@ -328,6 +392,15 @@ private:
     double ramp_rate_;
     double publish_rate_;
     double command_timeout_;
+    double status_timeout_;
+
+    // latest VESC STATUS per wheel (fl, fr, rl, rr)
+    std::array<int32_t, 4> status_erpm_{};
+    std::array<double, 4> status_current_{};
+    std::array<rclcpp::Time, 4> status_time_{rclcpp::Time(0, 0, RCL_STEADY_TIME), rclcpp::Time(0, 0, RCL_STEADY_TIME),
+                                             rclcpp::Time(0, 0, RCL_STEADY_TIME), rclcpp::Time(0, 0, RCL_STEADY_TIME)};
+    std::array<bool, 4> status_seen_{};
+    rclcpp::Publisher<sensor_msgs::msg::JointState>::SharedPtr wheel_state_pub_;
 
     // time each wheel last received a command, on a steady clock (unaffected by sim time or clock jumps);
     // they start at the clock's epoch, so the wheels stay stopped until the first command arrives

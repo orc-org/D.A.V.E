@@ -28,6 +28,7 @@ add_executable(vesc_can_driver_node src/vesc_can_driver_node.cpp)
 ament_target_dependencies(vesc_can_driver_node
   rclcpp
   std_msgs
+  sensor_msgs
 )
 
 install(TARGETS

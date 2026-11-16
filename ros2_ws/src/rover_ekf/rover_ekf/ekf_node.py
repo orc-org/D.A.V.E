@@ -4,7 +4,7 @@ import time
 import numpy as np
 import rclpy
 from rclpy.node import Node
-from sensor_msgs.msg import Imu, NavSatFix
+from sensor_msgs.msg import Imu, NavSatFix, JointState
 from geometry_msgs.msg import Vector3, Twist, TransformStamped
 from nav_msgs.msg import Odometry
 from std_msgs.msg import Float32
@@ -67,6 +67,12 @@ class RoverEKFNode(Node):
         # Wheel speed comes from the /motor/* COMMANDS (there is no encoder or VESC feedback yet), scaled to
         # m/s: 1.0 for vesc_can_driver in metric mode (1.0 = 1 m/s), 1.5 for the simulator's sim_drive_bridge.
         self.declare_parameter('speed_per_motor_command', 1.0)
+        # Measured wheel speed from vesc_can_driver_node (/wheel_states, wheel rad/s from VESC ERPM) is
+        # preferred over the commands whenever it is fresh. wheel_radius must match the real wheel
+        # (and vesc_can_driver_node's own wheel_radius): 0.10 is the driver's default, the URDF says 0.15.
+        self.declare_parameter('topic_wheel_states', '/wheel_states')
+        self.declare_parameter('wheel_radius', 0.10)
+        self.wheel_radius = float(self.get_parameter('wheel_radius').value)
         # /cmd_vel is a command, not a measurement, and was fused in addition to /motor/* (double counting)
         self.declare_parameter('fuse_cmd_vel', False)
         # Local frame origin. NaN = the first GPS fix. Set it to NAVnode's home waypoint so both share a frame.
@@ -100,7 +106,8 @@ class RoverEKFNode(Node):
 
         # Measurement Noise Covariances R
         self.R_imu = np.diag([0.01, 0.005])   # [theta_imu, omega_imu]
-        self.R_wheel = np.array([[0.08]])      # [v_wheel]
+        self.R_wheel = np.array([[0.08]])      # [v_wheel] from commands
+        self.R_wheel_measured = np.array([[0.02]])   # [v_wheel] from VESC ERPM (slip still unmodelled)
         self.R_gps = np.diag([1.5, 1.5])      # [X_gps, Y_gps] in meters
 
         # Sensor inputs
@@ -138,6 +145,10 @@ class RoverEKFNode(Node):
 
         self.fl_v, self.fr_v, self.rl_v, self.rr_v = 0.0, 0.0, 0.0, 0.0
         self.last_motor_time = None          # monotonic time of the last /motor/* message
+        self.measured_speed = 0.0
+        self.last_wheel_state_time = None    # monotonic time of the last /wheel_states message
+        self.sub_wheel_states = self.create_subscription(
+            JointState, str(self.get_parameter('topic_wheel_states').value), self.wheel_states_cb, 10)
         self.last_predict_time = time.monotonic()
 
         # Publishers & TF Broadcaster
@@ -157,6 +168,14 @@ class RoverEKFNode(Node):
     def fr_motor_cb(self, msg): self.fr_v = msg.data; self.last_motor_time = time.monotonic()
     def rl_motor_cb(self, msg): self.rl_v = msg.data; self.last_motor_time = time.monotonic()
     def rr_motor_cb(self, msg): self.rr_v = msg.data; self.last_motor_time = time.monotonic()
+
+    def wheel_states_cb(self, msg: JointState):
+        """Measured wheel angular speeds (rad/s); forward speed = mean of the reporting wheels x radius."""
+        speeds = [v for v in msg.velocity if math.isfinite(v)]
+        if len(speeds) < 2:
+            return   # one wheel alone (or a slipping one) is too little to trust
+        self.measured_speed = sum(speeds) / len(speeds) * self.wheel_radius
+        self.last_wheel_state_time = time.monotonic()
 
     def imu_euler_callback(self, msg: Vector3):
         """Measurement update for IMU Orientation (Yaw, Roll, Pitch)."""
@@ -196,12 +215,14 @@ class RoverEKFNode(Node):
         v_wheel = msg.linear.x
         self.update_wheel_odometry(v_wheel)
 
-    def update_wheel_odometry(self, v_wheel: float):
-        """Apply EKF measurement update for forward speed v_wheel."""
+    def update_wheel_odometry(self, v_wheel: float, R=None):
+        """Apply EKF measurement update for forward speed v_wheel (R defaults to the command noise)."""
+        if R is None:
+            R = self.R_wheel
         z = np.array([v_wheel])
         H = np.array([[0, 0, 0, 1, 0]])
         y = z - H @ self.x
-        S = H @ self.P @ H.T + self.R_wheel
+        S = H @ self.P @ H.T + R
         K = self.P @ H.T @ np.linalg.inv(S)
         self.x = self.x + K @ y
         self.P = (np.eye(5) - K @ H) @ self.P
@@ -259,7 +280,10 @@ class RoverEKFNode(Node):
 
         # Wheel speed from the motor commands while they are fresh (same 0.5 s as the drive deadman).
         # Zero is information too: it used to be skipped, so a stopped rover kept coasting on v.
-        if self.last_motor_time is not None and now_mono - self.last_motor_time < 0.5:
+        # Measured VESC wheel speed is preferred; commands are the fallback.
+        if self.last_wheel_state_time is not None and now_mono - self.last_wheel_state_time < 0.3:
+            self.update_wheel_odometry(self.measured_speed, self.R_wheel_measured)
+        elif self.last_motor_time is not None and now_mono - self.last_motor_time < 0.5:
             command = ((self.fl_v + self.rl_v) + (self.fr_v + self.rr_v)) * 0.25  # mean of the four wheels
             self.update_wheel_odometry(command * self.speed_per_command)
 
