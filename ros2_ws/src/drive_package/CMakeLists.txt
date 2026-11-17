@@ -17,6 +17,10 @@ find_package(geometry_msgs REQUIRED)
 # C++ joystick drive node
 # -----------------------------
 add_executable(drive_node src/drive_node.cpp)
+target_include_directories(drive_node PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  $<INSTALL_INTERFACE:include>
+)
 ament_target_dependencies(drive_node
   rclcpp
   sensor_msgs
@@ -25,10 +29,18 @@ ament_target_dependencies(drive_node
 )
 
 add_executable(vesc_can_driver_node src/vesc_can_driver_node.cpp)
+target_include_directories(vesc_can_driver_node PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  $<INSTALL_INTERFACE:include>
+)
 ament_target_dependencies(vesc_can_driver_node
   rclcpp
   std_msgs
   sensor_msgs
+)
+
+install(DIRECTORY include/
+  DESTINATION include
 )
 
 install(TARGETS
@@ -38,12 +50,19 @@ install(TARGETS
 )
 
 # -----------------------------
-# Linting
+# Testing & Linting
 # -----------------------------
 if(BUILD_TESTING)
+  find_package(ament_cmake_gtest REQUIRED)
+  ament_add_gtest(test_drive_math test/test_drive_math.cpp)
+  target_include_directories(test_drive_math PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  )
+
   find_package(ament_lint_auto REQUIRED)
   set(ament_cmake_copyright_FOUND TRUE)
   set(ament_cmake_cpplint_FOUND TRUE)
+  set(ament_cmake_uncrustify_FOUND TRUE)
   ament_lint_auto_find_test_dependencies()
 endif()
 
