@@ -67,9 +67,9 @@ echo "starting dashboard web server on port 8000..."
 python3 -m http.server 8000 --directory "$SCRIPT_DIR/dashboard" > /tmp/webserver_sim.log 2>&1 &
 WEB_PID=$!
 
-# launch modern gazebo, rviz, and drive subsystem
+# launch modern gazebo, rviz, and drive subsystem (forwards any CLI launch args like use_sim_stack:=true or world:=...)
 echo "launching modern gazebo (ros_gz), rviz, and drive subsystem..."
-ros2 launch rover_description sim.launch.py > /tmp/gazebo_sim.log 2>&1 &
+ros2 launch rover_description sim.launch.py "$@" > /tmp/gazebo_sim.log 2>&1 &
 SIM_PID=$!
 
 # report children that died during start-up instead of claiming success
