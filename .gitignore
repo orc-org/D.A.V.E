@@ -59,3 +59,7 @@ captainsLogs/
 
 # Offline map tiles for the dashboard (large and licence-dependent; see dashboard/vendor/README.md)
 dashboard/tiles/
+
+# Unignore vendored JS bundles stored under package build/ subdirectories
+!dashboard/vendor/**/build/
+!dashboard/vendor/**/build/**
