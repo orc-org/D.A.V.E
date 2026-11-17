@@ -1,7 +1,22 @@
-# Robot Physical Dimensions (Units: decimeters (lol), or whatever we want later)
+# robot physical dimensions (meters and kilograms)
 robot_dimensions:
-  column_base_offset: 0.5
-  column_height: 5.0
-  mount_length: 6.0
-  arm_length: 8.0
-  tool_tip_length: 2.0
+  # chassis body
+  chassis_length: 0.70
+  chassis_width: 0.50
+  chassis_height: 0.20
+  chassis_mass: 15.0
+
+  # wheels (4-wheel skid-steer configuration)
+  wheel_radius: 0.15
+  wheel_width: 0.08
+  wheel_mass: 1.5
+  wheel_x_offset: 0.25
+  wheel_y_offset: 0.30
+  wheel_z_offset: 0.00
+
+  # robotic arm and manipulator (preserved for rover_arm.xacro and motion_coordinator)
+  column_base_offset: 0.10
+  column_height: 0.40
+  mount_length: 0.30
+  arm_length: 0.45
+  tool_tip_length: 0.15

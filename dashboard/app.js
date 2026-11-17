@@ -165,13 +165,30 @@ const joystickMaxRadius = 50; // max travel distance in pixels
 // ----------------------------------------------------
 // 1. ROS BRIDGE CONNECTION LOGIC
 // ----------------------------------------------------
+let userDisconnected = false;
+let autoReconnectTimer = null;
+
+function scheduleAutoReconnect() {
+    if (userDisconnected) return;
+    if (autoReconnectTimer) clearTimeout(autoReconnectTimer);
+    autoReconnectTimer = setTimeout(() => {
+        if (!connected && !userDisconnected) {
+            console.log('Attempting automatic reconnection to Rosbridge...');
+            connectROS();
+        }
+    }, 2000);
+}
+
 function connectROS() {
     if (connected) {
-        // Disconnect
+        // Explicit user disconnect
+        userDisconnected = true;
+        if (autoReconnectTimer) clearTimeout(autoReconnectTimer);
         ros.close();
         return;
     }
 
+    userDisconnected = false;
     const url = ipInput.value;
     connectionText.innerText = "CONNECTING...";
     connectBtn.innerText = "WAITING...";
@@ -182,6 +199,7 @@ function connectROS() {
 
     ros.on('connection', () => {
         connected = true;
+        if (autoReconnectTimer) clearTimeout(autoReconnectTimer);
         connectionDot.className = 'status-indicator connected';
         connectionText.innerText = "CONNECTED";
         connectBtn.innerText = "DISCONNECT";
@@ -201,6 +219,7 @@ function connectROS() {
         connectBtn.className = "neon-btn-blue";
         console.error('Error connecting to Rosbridge: ', error);
         hudLatency.innerText = "-- ms";
+        scheduleAutoReconnect();
     });
 
     ros.on('close', () => {
@@ -212,6 +231,9 @@ function connectROS() {
         console.log('Connection to Rosbridge closed.');
         hudLatency.innerText = "-- ms";
         cleanupROSInterfaces();
+        if (!userDisconnected) {
+            scheduleAutoReconnect();
+        }
     });
 }
 
@@ -695,6 +717,13 @@ function startGamepadUIInterval() {
             let gpThrottle = gp.axes[1] !== undefined ? gp.axes[1] : 0.0;
             let gpArm = gp.axes[3] !== undefined ? gp.axes[3] : 0.0;
             
+            let r2 = (gp.buttons[7] && gp.buttons[7].value !== undefined) ? gp.buttons[7].value : 0.0;
+            let l2 = (gp.buttons[6] && gp.buttons[6].value !== undefined) ? gp.buttons[6].value : 0.0;
+            let triggerThrottle = r2 - l2;
+            if (Math.abs(triggerThrottle) >= 0.1) {
+                gpThrottle = -triggerThrottle;
+            }
+            
             if (gamepadValL) {
                 gamepadValL.innerText = `X: ${gpSteering.toFixed(2)} Y: ${gpThrottle.toFixed(2)}`;
             }
@@ -762,8 +791,15 @@ function startControlLoopTimer() {
             let gpThrottle = gp.axes[1] !== undefined ? gp.axes[1] : 0.0;
             let gpArm = gp.axes[3] !== undefined ? gp.axes[3] : 0.0;
             
+            let r2 = (gp.buttons[7] && gp.buttons[7].value !== undefined) ? gp.buttons[7].value : 0.0;
+            let l2 = (gp.buttons[6] && gp.buttons[6].value !== undefined) ? gp.buttons[6].value : 0.0;
+            let triggerThrottle = r2 - l2;
+            
             // Deadzone
             const deadzone = 0.1;
+            if (Math.abs(triggerThrottle) >= deadzone) {
+                gpThrottle = -triggerThrottle;
+            }
             const hasSteering = Math.abs(gpSteering) >= deadzone;
             const hasThrottle = Math.abs(gpThrottle) >= deadzone;
             const hasArm = Math.abs(gpArm) >= deadzone;
@@ -1297,6 +1333,9 @@ setTimeout(() => {
         showGamepadStatus(true, gp.id);
     }
 }, 500);
+
+// Auto-connect to ROS 2 bridge WebSocket on load
+setTimeout(connectROS, 400);
 
 // Toggle view callback
 btnToggleView.addEventListener('click', () => {

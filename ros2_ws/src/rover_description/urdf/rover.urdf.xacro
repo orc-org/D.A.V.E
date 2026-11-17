@@ -1,141 +1,121 @@
 <?xml version="1.0"?>
-<robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="rover_arm">
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="dave_rover">
 
-  <!-- load global parameters -->
+  <!-- configuration and external parameters -->
   <xacro:property name="config_path" value="$(find rover_description)/config/physical_params.yaml" />
   <xacro:property name="params" value="${xacro.load_yaml(config_path)['robot_dimensions']}" />
 
-  <!-- extract values -->
+  <!-- chassis dimensions -->
+  <xacro:property name="chassis_l" value="${params['chassis_length']}" />
+  <xacro:property name="chassis_w" value="${params['chassis_width']}" />
+  <xacro:property name="chassis_h" value="${params['chassis_height']}" />
+  <xacro:property name="chassis_m" value="${params['chassis_mass']}" />
+
+  <!-- wheel dimensions -->
+  <xacro:property name="wheel_r" value="${params['wheel_radius']}" />
+  <xacro:property name="wheel_w" value="${params['wheel_width']}" />
+  <xacro:property name="wheel_m" value="${params['wheel_mass']}" />
+  <xacro:property name="wheel_x_off" value="${params['wheel_x_offset']}" />
+  <xacro:property name="wheel_y_off" value="${params['wheel_y_offset']}" />
+  <xacro:property name="wheel_z_off" value="${params['wheel_z_offset']}" />
+
+  <!-- arm dimensions (available for rover_arm.xacro) -->
   <xacro:property name="c_off" value="${params['column_base_offset']}" />
   <xacro:property name="c_len" value="${params['column_height']}" />
   <xacro:property name="m_len" value="${params['mount_length']}" />
   <xacro:property name="a_len" value="${params['arm_length']}" />
   <xacro:property name="t_len" value="${params['tool_tip_length']}" />
 
-  <material name="black"><color rgba="0 0 0 1"/></material>
-  <material name="blue"><color rgba="0 0 0.8 1"/></material>
-  <material name="red"><color rgba="0.8 0 0 1"/></material>
-  <material name="green"><color rgba="0 0.8 0 1"/></material>
+  <!-- inertial macros and gazebo control plugins -->
+  <xacro:include filename="inertial_macros.xacro" />
+  <xacro:include filename="gazebo_control.xacro" />
 
+  <!-- rviz materials -->
+  <material name="chassis_orange"><color rgba="0.95 0.45 0.05 1.0"/></material>
+  <material name="tire_black"><color rgba="0.1 0.1 0.1 1.0"/></material>
+  <material name="rim_grey"><color rgba="0.4 0.4 0.4 1.0"/></material>
+  <material name="blue"><color rgba="0 0.4 0.8 1.0"/></material>
+  <material name="red"><color rgba="0.8 0.1 0.1 1.0"/></material>
+  <material name="green"><color rgba="0.1 0.8 0.1 1.0"/></material>
+  <material name="black"><color rgba="0.05 0.05 0.05 1.0"/></material>
+
+  <!-- base footprint (ground plane projection) -->
+  <link name="base_footprint"/>
+
+  <joint name="base_footprint_joint" type="fixed">
+    <parent link="base_footprint"/>
+    <child link="base_link"/>
+    <!-- position base_link above ground so wheels touch the surface -->
+    <origin xyz="0 0 ${wheel_r}" rpy="0 0 0"/>
+  </joint>
+
+  <!-- base chassis (driving box) -->
   <link name="base_link">
-    <visual><geometry><box size="4.0 4.0 1.0"/></geometry><material name="black"/></visual>
+    <!-- visual representation -->
+    <visual>
+      <origin xyz="0 0 ${chassis_h/2.0}" rpy="0 0 0"/>
+      <geometry>
+        <box size="${chassis_l} ${chassis_w} ${chassis_h}"/>
+      </geometry>
+      <material name="chassis_orange"/>
+    </visual>
+
+    <!-- collision geometry -->
+    <collision>
+      <origin xyz="0 0 ${chassis_h/2.0}" rpy="0 0 0"/>
+      <geometry>
+        <box size="${chassis_l} ${chassis_w} ${chassis_h}"/>
+      </geometry>
+    </collision>
+
+    <!-- inertial properties for physics simulation -->
+    <xacro:inertial_box mass="${chassis_m}" x="${chassis_l}" y="${chassis_w}" z="${chassis_h}">
+      <origin xyz="0 0 ${chassis_h/2.0}" rpy="0 0 0"/>
+    </xacro:inertial_box>
   </link>
 
-  <!-- define wheel macro -->
+  <!-- 4-wheel macro definition -->
   <xacro:macro name="wheel" params="prefix x_offset y_offset">
     <joint name="${prefix}_wheel_joint" type="continuous">
       <parent link="base_link"/>
       <child link="${prefix}_wheel_link"/>
-      <origin xyz="${x_offset} ${y_offset} -0.3" rpy="0 0 0"/>
+      <origin xyz="${x_offset} ${y_offset} ${wheel_z_off}" rpy="0 0 0"/>
       <axis xyz="0 1 0"/>
     </joint>
+
     <link name="${prefix}_wheel_link">
+      <!-- visual wheel (cylinder aligned along y axis) -->
       <visual>
-        <origin xyz="0 0 0" rpy="1.57079632679 0 0"/>
+        <origin xyz="0 0 0" rpy="${pi/2.0} 0 0"/>
         <geometry>
-          <cylinder radius="0.8" length="0.4"/>
+          <cylinder radius="${wheel_r}" length="${wheel_w}"/>
         </geometry>
-        <material name="black"/>
+        <material name="tire_black"/>
       </visual>
+
+      <!-- collision wheel -->
+      <collision>
+        <origin xyz="0 0 0" rpy="${pi/2.0} 0 0"/>
+        <geometry>
+          <cylinder radius="${wheel_r}" length="${wheel_w}"/>
+        </geometry>
+      </collision>
+
+      <!-- wheel moment of inertia -->
+      <xacro:inertial_wheel_y mass="${wheel_m}" length="${wheel_w}" radius="${wheel_r}">
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+      </xacro:inertial_wheel_y>
     </link>
   </xacro:macro>
 
-  <xacro:wheel prefix="front_left" x_offset="1.5" y_offset="2.2"/>
-  <xacro:wheel prefix="front_right" x_offset="1.5" y_offset="-2.2"/>
-  <xacro:wheel prefix="rear_left" x_offset="-1.5" y_offset="2.2"/>
-  <xacro:wheel prefix="rear_right" x_offset="-1.5" y_offset="-2.2"/>
+  <!-- wheel instantiations -->
+  <xacro:wheel prefix="front_left"  x_offset="${wheel_x_off}"  y_offset="${wheel_y_off}" />
+  <xacro:wheel prefix="front_right" x_offset="${wheel_x_off}"  y_offset="-${wheel_y_off}" />
+  <xacro:wheel prefix="rear_left"   x_offset="-${wheel_x_off}" y_offset="${wheel_y_off}" />
+  <xacro:wheel prefix="rear_right"  x_offset="-${wheel_x_off}" y_offset="-${wheel_y_off}" />
 
-  <joint name="stand_column_joint" type="fixed">
-    <parent link="base_link"/><child link="column_link"/>
-    <origin xyz="0 0 ${c_off}"/>
-  </joint>
-  <link name="column_link">
-    <visual><origin xyz="0 0 ${c_len/2}"/><geometry><cylinder radius="0.5" length="${c_len}"/></geometry><material name="blue"/></visual>
-  </link>
-
-  <joint name="stand_arm_joint" type="fixed">
-    <parent link="column_link"/><child link="mount_link"/>
-    <origin xyz="0 0 ${c_len}"/>
-  </joint>
-  <link name="mount_link">
-    <visual><origin xyz="${m_len/2} 0 0"/><geometry><box size="${m_len} 0.5 0.5"/></geometry><material name="red"/></visual>
-  </link>
-
-  <joint name="arm_joint" type="continuous">
-    <parent link="mount_link"/><child link="actual_arm_link"/>
-    <origin xyz="${m_len} 0 0"/><axis xyz="0 1 0"/>
-  </joint>
-  <link name="actual_arm_link">
-    <visual><origin xyz="${a_len/2} 0 0"/><geometry><box size="${a_len} 0.4 0.4"/></geometry><material name="green"/></visual>
-  </link>
-
-  <joint name="tool_joint" type="fixed">
-    <parent link="actual_arm_link"/><child link="tool_link"/>
-    <origin xyz="${a_len} 0 0"/>
-  </joint>
-  <link name="tool_link">
-    <visual><origin xyz="${t_len/2} 0 0"/><geometry><sphere radius="0.3"/></geometry><material name="green"/></visual>
-  </link>
-
-  <!-- grabber / gripper fingers -->
-  <joint name="left_finger_joint" type="prismatic">
-    <parent link="tool_link"/><child link="left_finger_link"/>
-    <origin xyz="0.3 0.3 0" rpy="0 0 0"/>
-    <axis xyz="0 1 0"/>
-    <limit lower="-0.2" upper="0.2" effort="10" velocity="0.5"/>
-  </joint>
-  <link name="left_finger_link">
-    <visual><origin xyz="0.3 0 0"/><geometry><box size="0.6 0.1 0.3"/></geometry><material name="blue"/></visual>
-  </link>
-
-  <joint name="right_finger_joint" type="prismatic">
-    <parent link="tool_link"/><child link="right_finger_link"/>
-    <origin xyz="0.3 -0.3 0" rpy="0 0 0"/>
-    <axis xyz="0 -1 0"/>
-    <limit lower="-0.2" upper="0.2" effort="10" velocity="0.5"/>
-  </joint>
-  <link name="right_finger_link">
-    <visual><origin xyz="0.3 0 0"/><geometry><box size="0.6 0.1 0.3"/></geometry><material name="blue"/></visual>
-  </link>
-
-  <joint name="gripper_motor_body_joint" type="fixed">
-    <parent link="tool_link"/>
-    <child link="gripper_motor_body_link"/>
-    <origin xyz="0.3 0 0.35" rpy="0 0 0"/>
-  </joint>
-  <link name="gripper_motor_body_link">
-    <visual>
-      <geometry>
-        <box size="0.3 0.3 0.3"/>
-      </geometry>
-      <material name="black"/>
-    </visual>
-  </link>
-
-  <!-- i don't know the exact mechanism but this works now for simulations-->
-  <!-- stepper motor rotating shaft / lead screw (rotates around Y axis) -->
-  <joint name="gripper_motor_shaft_joint" type="continuous">
-    <parent link="gripper_motor_body_link"/>
-    <child link="gripper_motor_shaft_link"/>
-    <origin xyz="0 0 -0.2" rpy="0 0 0"/>
-    <axis xyz="0 1 0"/>
-  </joint>
-  <link name="gripper_motor_shaft_link">
-    <!-- main shaft cylinder -->
-    <visual>
-      <origin xyz="0 0 0" rpy="1.57079632679 0 0"/>
-      <geometry>
-        <cylinder radius="0.04" length="0.8"/>
-      </geometry>
-      <material name="red"/>
-    </visual>
-    <visual>
-      <origin xyz="0 0 0.05" rpy="0 0 0"/>
-      <geometry>
-        <box size="0.2 0.08 0.04"/>
-      </geometry>
-      <material name="red"/>
-    </visual>
-  </link>
+  <!-- robotic arm and manipulator (modular component) -->
+  <!-- to attach the robotic arm, simply uncomment the line below: -->
+  <!-- <xacro:include filename="rover_arm.xacro" /> -->
 
 </robot>

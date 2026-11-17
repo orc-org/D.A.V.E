@@ -25,16 +25,10 @@ class DashboardHelperNode(Node):
         video_streamer_path = os.path.join(repo_root, "ros2_ws/src/rover_video_streamer/rover_video_streamer/video_streamer.py")
 
         self.processes = {
-            "tf_republisher": {
-                "name": "TF Web Republisher",
-                "cmd": ["ros2", "run", "tf2_web_republisher", "tf2_web_republisher_node"],
-                "pattern": "tf2_web_republisher_node",
-                "proc": None
-            },
             "state_publisher": {
                 "name": "Robot State Publisher",
                 "cmd": ["ros2", "launch", "rover_description", "view_robot.launch.py", "use_rviz:=false"],
-                "pattern": "view_robot.launch.py",
+                "pattern": "robot_state_publisher",
                 "proc": None
             },
             "motion_coordinator": {

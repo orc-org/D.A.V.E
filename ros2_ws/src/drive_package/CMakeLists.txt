@@ -8,6 +8,8 @@ endif()
 
 # Find dependencies
 find_package(ament_cmake REQUIRED)
+find_package(ament_index_cpp REQUIRED)
+find_package(yaml-cpp REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(sensor_msgs REQUIRED)
 find_package(std_msgs REQUIRED)
@@ -27,8 +29,10 @@ ament_target_dependencies(drive_node
 add_executable(vesc_can_driver_node src/vesc_can_driver_node.cpp)
 ament_target_dependencies(vesc_can_driver_node
   rclcpp
+  ament_index_cpp
   std_msgs
 )
+target_link_libraries(vesc_can_driver_node yaml-cpp)
 
 install(TARGETS
   drive_node
