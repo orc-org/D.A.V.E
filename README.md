@@ -2,7 +2,7 @@
 Introducing: D.A.V.E.! Okanagan Rover Craft's First Rover developed using the ROS2 Humble Hawksbill Framework! :) :)
 
 ## Overview
-**D.A.V.E. (Dry-land Autonomous Vehicular Explorer)** runs on **ROS 2 Humble** across physical Jetson/VESC hardware, a **Modern Gazebo (Gazebo Fortress / `ros_gz`) + RViz2** simulation stack, and a browser-based **Web Dashboard** connected over `rosbridge_websocket`.
+**D.A.V.E.** runs on **ROS 2 Humble** across physical Jetson/VESC hardware, a **Modern Gazebo (Gazebo Fortress / `ros_gz`) + RViz2** simulation stack, and a browser-based **Web Dashboard** connected over `rosbridge_websocket`.
 
 ## Repository Layout
 * [`ros2_ws/`](ros2_ws) — ROS 2 Humble workspace (`rover_description`, `drive_package`, `arm_controller`, `navigation_system`, `rover_ekf`, `IMU`, `rover_video_streamer`, `serial_communication`, `servo_controller`, `light_package`, and message interfaces).
