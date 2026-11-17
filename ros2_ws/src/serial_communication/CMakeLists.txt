@@ -11,9 +11,6 @@ find_package(rclcpp REQUIRED)
 find_package(serial_interfaces REQUIRED)
 find_package(std_msgs REQUIRED)
 
-# Single source of truth for SerialPort.hpp lives in include/serial_communication
-include_directories(${CMAKE_CURRENT_SOURCE_DIR}/include/serial_communication)
-
 set(SOURCE_FILES
   src/SerialPort.cpp 
 )
@@ -32,6 +29,11 @@ add_executable(XLR_UI
 ament_target_dependencies(XLR_UI rclcpp serial_interfaces)
 
 target_include_directories(XLRnode PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include/serial_communication>
+  $<INSTALL_INTERFACE:include/serial_communication>
+)
+
+target_include_directories(XLR_UI PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include/serial_communication>
   $<INSTALL_INTERFACE:include/serial_communication>
 )

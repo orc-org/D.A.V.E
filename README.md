@@ -7,6 +7,7 @@ Full documentation is in [`docs/`](docs/README.md). If you are taking over the p
 - [`docs/guardrails-and-limits.md`](docs/guardrails-and-limits.md) — safety guardrails (active vs. missing), timeouts, rates, latency limits, and DDS/Jetson budgets
 - [`docs/engineering-diary.md`](docs/engineering-diary.md) — chronological diary and commit-by-commit fix audit vs. robotics literature
 - [`docs/remediation-roadmap.md`](docs/remediation-roadmap.md) — prioritized backlog (`P0`–`P4`) of fixes, additions, and retirements
+- [`ros2_ws/src/rover_description/SIMULATION_ARCHITECTURE.md`](ros2_ws/src/rover_description/SIMULATION_ARCHITECTURE.md) & [`ROS2_TEAM_DEMO_GUIDE.md`](ros2_ws/src/rover_description/ROS2_TEAM_DEMO_GUIDE.md) — simulation architecture deep dive and live ROS 2 demo walkthrough
 
 The SLAM/perception program (Jetson Orin Nano Super + Unitree LiDAR) is documented in [`docs/slam/`](docs/slam/README.md).
 

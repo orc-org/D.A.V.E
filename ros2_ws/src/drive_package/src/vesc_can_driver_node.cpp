@@ -1,9 +1,12 @@
 #include "rclcpp/rclcpp.hpp"
+#include "ament_index_cpp/get_package_share_directory.hpp"
 #include "std_msgs/msg/float32.hpp"
 #include "std_msgs/msg/string.hpp"
 #include "sensor_msgs/msg/joint_state.hpp"
 #include "drive_package/drive_math.hpp"
+#include <yaml-cpp/yaml.h>
 #include <array>
+#include <stdexcept>
 #include <string>
 #include <vector>
 #include <algorithm>
@@ -41,10 +44,14 @@ public:
         this->declare_parameter<int>("rl_can_id", 48);
         this->declare_parameter<int>("rr_can_id", 7);
 
-        this->declare_parameter<double>("wheel_radius", 0.10);
-        this->declare_parameter<int>("pole_pairs", 2);
-        this->declare_parameter<double>("gear_ratio", 50.0);
-        this->declare_parameter<bool>("use_metric_speed", true);
+        // Physical wheel & motor parameters for speed (m/s) -> ERPM calculation.
+        // Wheel radius is sourced from rover_description/config/physical_params.yaml
+        // unless explicitly overridden via ROS parameter.
+        double config_wheel_radius = loadWheelRadiusFromConfig();
+        this->declare_parameter<double>("wheel_radius", config_wheel_radius);
+        this->declare_parameter<int>("pole_pairs", 2);          // BLDC motor pole pairs (e.g. 7 for 14-pole motor)
+        this->declare_parameter<double>("gear_ratio", 50.0);     // Gearbox reduction ratio (1.0 = direct drive)
+        this->declare_parameter<bool>("use_metric_speed", true); // true = velocity in m/s, false = normalized -1..1
 
         can_interface_ = this->get_parameter("can_interface").as_string();
         control_mode_ = this->get_parameter("control_mode").as_string();
@@ -64,6 +71,17 @@ public:
         pole_pairs_ = this->get_parameter("pole_pairs").as_int();
         gear_ratio_ = this->get_parameter("gear_ratio").as_double();
         use_metric_speed_ = this->get_parameter("use_metric_speed").as_bool();
+
+        if (control_mode_ == "erpm" && use_metric_speed_ && wheel_radius_ <= 0.0)
+        {
+            RCLCPP_FATAL(
+                this->get_logger(),
+                "Invalid or missing wheel_radius (%.4f). Build/source rover_description "
+                "or pass -p wheel_radius:=<meters>.",
+                wheel_radius_);
+            throw std::runtime_error("wheel_radius must be > 0 in metric ERPM mode");
+        }
+        RCLCPP_INFO(this->get_logger(), "Using wheel_radius = %.4f m", wheel_radius_);
 
         fl_can_id_ = this->get_parameter("fl_can_id").as_int();
         fr_can_id_ = this->get_parameter("fr_can_id").as_int();
@@ -142,6 +160,39 @@ private:
     {
         target_fl_ = target_fr_ = target_rl_ = target_rr_ = 0.0f;
         current_fl_ = current_fr_ = current_rl_ = current_rr_ = 0.0f;
+    }
+
+    /** Load shared wheel_radius default from rover_description/config/physical_params.yaml. */
+    double loadWheelRadiusFromConfig()
+    {
+        try
+        {
+            const std::string config_path =
+                ament_index_cpp::get_package_share_directory("rover_description") +
+                "/config/physical_params.yaml";
+            const YAML::Node config = YAML::LoadFile(config_path);
+            const YAML::Node dims = config["robot_dimensions"];
+            if (dims && dims["wheel_radius"])
+            {
+                const double radius = dims["wheel_radius"].as<double>();
+                if (radius > 0.0)
+                {
+                    return radius;
+                }
+            }
+            RCLCPP_WARN(
+                this->get_logger(),
+                "Missing or invalid robot_dimensions.wheel_radius in %s",
+                config_path.c_str());
+        }
+        catch (const std::exception &e)
+        {
+            RCLCPP_WARN(
+                this->get_logger(),
+                "Could not load wheel_radius from rover_description/config/physical_params.yaml: %s",
+                e.what());
+        }
+        return -1.0;
     }
 
     bool initCanSocket(const std::string &interface)
