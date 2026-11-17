@@ -63,6 +63,7 @@ Three groups: what was fixed while consolidating the repository, what is still o
 | | `NAVnode`: the add services set home silently (even without a fix); `FollowRoute` ran in a detached thread reading freed memory | Refused without a fix, warned with one; goal tracked by the timer |
 | | No wheel speed feedback: the EKF fused motor commands as if measured | `vesc_can_driver_node` reads VESC CAN STATUS frames → `/wheel_states`; `rover_ekf` prefers it (enable CAN status on the VESCs) |
 | Docs | `slam/architecture.md` gave the Unitree driver's frames as `lidar_link`/`lidar_imu_link` (those are the canonical names); the SDK uses `unilidar_lidar`/`unilidar_imu` | Corrected |
+| Cross-node seams (`2026-11-16`) | `sim_drive_bridge` bypassed `drive_node` lockouts/sensitivity via raw `/cmd_vel`; `drive_node` let 10 Hz zero `/cmd_vel` fight `/joy`; `dashboard/app.js` missed `base_footprint` TF, overwrote `imuOdomData` with `/ekf/odometry`, and `index.html` clamped `#slider-gripper` at `[-100, 100]`; `motion_coordinator` mapped fingers past `rover_arm.xacro` bounds; `lights`/`servo_node`/`arm_stepper_driver` called unscoped `GPIO.cleanup()`; `dashboard_helper` leaked log FDs and missed `use_gps_fix_topic:=true` with `gps_bridge`; `NAVnode` `remove{Local,Geodetic,EarthCentred}` edited `routeToFollow`; `XLRnode` leaked `SerialPort`; `morse_recorder` had wall-clock/unmutexed `imshow`; `input_viewer` crashed on `<6`-axis `/joy` | Fixed and verified with `integration_adversarial_test.py` (3 scenarios / 12 assertions) and headless Gazebo `sim.launch.py use_sim_stack:=true` |
 
 ## 2. Open — needs hardware verification, measurement, or autonomy development
 
@@ -76,9 +77,9 @@ Three groups: what was fixed while consolidating the repository, what is still o
 8. **Script findings left open** (need hardware verification or design choices):
    - `test_dm556y_steppers.py`: confirm physical pin wiring (`15/13` vs `33/18`, `32/13`) before powering steppers.
    - `NAVnode`: still writes `captains log <date>.txt` into `src/navigation_system/captainsLogs` relative to CWD.
-   - `morse_recorder.py`: assumes first pulse is a dot, uses wall clock `time.time()`, and calls `cv2.imshow` without mutex protection from the capture thread.
+   - `morse_recorder.py`: still assumes the first pulse is a dot (clock/mutex/headless-GUI issues resolved).
    - `video_streamer.py`: `--width`/`--height` remain strings; `receive_stream.bat` exits `0` on unknown option.
-   - `start_sim_system.sh` / `start_dashboard_system.sh`: write logs to fixed `/tmp` paths and do not stop `rosapi`.
+   - `start_sim_system.sh` / `start_dashboard_system.sh`: write logs to fixed `/tmp` paths (`rosapi` and sim/EKF/NAV process cleanup added).
    - `pyflakes` unused imports/variables in legacy scripts do not affect behavior.
 9. **Gazebo & Unitree L2 hardware gaps:**
    - Gazebo simulates flat-yard planar driving only (no rough terrain slip, no rolling helical L2 scan timing — `lidar_point_time.py` uses `1e-6 s`), and `rover_arm.xacro` stays disabled until its CAD offset vs `lidar_link` (`x=0, z=0.40`) is resolved.
@@ -94,7 +95,7 @@ Three groups: what was fixed while consolidating the repository, what is still o
 - **The IMU filter's position is not usable** (body-frame double integration), so `/imu/odometry` is off by default; its orientation now follows the BNO085. See [state-estimation.md](state-estimation.md).
 - **Arm control is open loop.** Auto mode runs inverse kinematics against the EKF pose when `/ekf/odometry` is fresh (otherwise a pose integrated from wheel commands, for visualisation), and moves the arm only unless `allow_base_motion:=true`; the stepper position is open loop. See [arm-and-kinematics.md](arm-and-kinematics.md).
 - **`move_to_point` is a stub** that reports success without waiting for the motion.
-- **Tests.** Core packages carry behavioral GTest/pytest suites (`test_drive_math`, `test_nav_math`, `test_ekf_math`, `test_imu_math`, `test_arm_math`, `scripts/slam/test_eval_trajectory.py`) alongside `waypoint_conversion_test.cpp` and `navnode_nmea_smoke_test.sh`. Hardware drivers (CAN, I²C, UART, GPIO) and `dashboard/app.js` remain unverified by CI/physical bench tests.
+- **Tests.** Core packages carry behavioral GTest/pytest suites (`test_drive_math`, `test_nav_math`, `test_ekf_math`, `test_imu_math`, `test_arm_math`, `scripts/slam/test_eval_trajectory.py`) alongside `waypoint_conversion_test.cpp`, `navnode_nmea_smoke_test.sh`, and the multi-node `scripts/tests/integration_adversarial_test.py` suite. Hardware drivers (CAN, I²C, UART, GPIO) and `dashboard/app.js` UI interactions remain unverified on physical hardware / browser CI.
 
 ## 4. The missing layer: perception and SLAM
 
