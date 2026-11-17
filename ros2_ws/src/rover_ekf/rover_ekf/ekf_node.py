@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 import math
-import time
 import numpy as np
 import rclpy
 from rclpy.node import Node
@@ -10,10 +9,86 @@ from nav_msgs.msg import Odometry
 from std_msgs.msg import Float32
 from tf2_ros import TransformBroadcaster
 
+WGS84_A = 6378137.0
+WGS84_E2 = 0.0066943799901413165
+
 
 def wrap_angle_rad(angle: float) -> float:
     """Wrap angle in radians to [-pi, pi]."""
     return (angle + math.pi) % (2.0 * math.pi) - math.pi
+
+
+def wgs84_enu_offset(lat_deg: float, lon_deg: float, lat0_deg: float, lon0_deg: float):
+    """Convert geodetic delta relative to (lat0, lon0) into local ENU (east_m, north_m) using WGS-84 radii."""
+    lat0_rad = math.radians(lat0_deg)
+    sin_lat = math.sin(lat0_rad)
+    denom_sq = 1.0 - WGS84_E2 * sin_lat * sin_lat
+    r_n = WGS84_A / math.sqrt(denom_sq)
+    r_m = WGS84_A * (1.0 - WGS84_E2) / (denom_sq ** 1.5)
+    x_east = math.radians(lon_deg - lon0_deg) * r_n * math.cos(lat0_rad)
+    y_north = math.radians(lat_deg - lat0_deg) * r_m
+    return float(x_east), float(y_north)
+
+
+def joseph_update(x: np.ndarray, P: np.ndarray, H: np.ndarray, y: np.ndarray, R: np.ndarray, wrap_angle_idx=None):
+    """Apply EKF update using the symmetric Joseph covariance form to preserve PSD guarantees."""
+    S = H @ P @ H.T + R
+    K = P @ H.T @ np.linalg.inv(S)
+    x_new = x + K @ y
+    if wrap_angle_idx is not None:
+        x_new[wrap_angle_idx] = wrap_angle_rad(float(x_new[wrap_angle_idx]))
+    I_KH = np.eye(len(x)) - K @ H
+    P_new = I_KH @ P @ I_KH.T + K @ R @ K.T
+    P_new = 0.5 * (P_new + P_new.T)
+    return x_new, P_new
+
+
+def predict_unicycle_state(x: np.ndarray, P: np.ndarray, Q: np.ndarray, dt: float, nominal_dt: float):
+    """Advance unicycle state [X, Y, theta, v, omega] and covariance over dt."""
+    if dt <= 0.0:
+        return x.copy(), P.copy()
+    X, Y, theta, v, omega = float(x[0]), float(x[1]), float(x[2]), float(x[3]), float(x[4])
+    decay = 0.98 ** (dt / max(nominal_dt, 1e-4))
+    x_next = np.array([
+        X + v * math.cos(theta) * dt,
+        Y + v * math.sin(theta) * dt,
+        wrap_angle_rad(theta + omega * dt),
+        v * decay,
+        omega * decay,
+    ])
+    F = np.array([
+        [1.0, 0.0, -v * math.sin(theta) * dt, math.cos(theta) * dt, 0.0],
+        [0.0, 1.0,  v * math.cos(theta) * dt, math.sin(theta) * dt, 0.0],
+        [0.0, 0.0, 1.0, 0.0, dt],
+        [0.0, 0.0, 0.0, decay, 0.0],
+        [0.0, 0.0, 0.0, 0.0, decay],
+    ])
+    P_next = F @ P @ F.T + Q * (dt / max(nominal_dt, 1e-4))
+    P_next = 0.5 * (P_next + P_next.T)
+    return x_next, P_next
+
+
+def compute_wheel_forward_omega(names, velocities):
+    """Compute balanced forward wheel angular speed (rad/s), requiring both L and R sides when named."""
+    if names and len(names) == len(velocities):
+        left_vals = []
+        right_vals = []
+        for name, val in zip(names, velocities):
+            if not math.isfinite(val):
+                continue
+            lname = name.lower()
+            if 'left' in lname:
+                left_vals.append(float(val))
+            elif 'right' in lname:
+                right_vals.append(float(val))
+        if left_vals and right_vals:
+            return 0.5 * (sum(left_vals) / len(left_vals) + sum(right_vals) / len(right_vals))
+        return None
+
+    speeds = [float(v) for v in velocities if math.isfinite(v)]
+    if len(speeds) < 2:
+        return None
+    return sum(speeds) / len(speeds)
 
 
 def euler_rad_to_quaternion(roll: float, pitch: float, yaw: float):
@@ -64,9 +139,11 @@ class RoverEKFNode(Node):
         # team's procedure); the state uses ENU (0 = east). theta = imu_yaw + offset, so 90 for a north tare.
         # (It used to be taken as ENU directly, putting dead reckoning 90 degrees off the GPS axes.)
         self.declare_parameter('imu_yaw_offset_deg', 90.0)
-        # Wheel speed comes from the /motor/* COMMANDS (there is no encoder or VESC feedback yet), scaled to
-        # m/s: 1.0 for vesc_can_driver in metric mode (1.0 = 1 m/s), 1.5 for the simulator's sim_drive_bridge.
+        # Wheel speed comes from /wheel_states when present, or /motor/* commands scaled by max wheel speed (m/s).
         self.declare_parameter('speed_per_motor_command', 1.0)
+        # Disable when another node/simulator (e.g. Gazebo DiffDrive) already owns the odom -> base TF edge.
+        self.declare_parameter('publish_tf', True)
+        self.publish_tf = bool(self.get_parameter('publish_tf').value)
         # Measured wheel speed from vesc_can_driver_node (/wheel_states, wheel rad/s from VESC ERPM) is
         # preferred over the commands whenever it is fresh. wheel_radius must match the real wheel
         # (and vesc_can_driver_node's own wheel_radius): 0.10 is the driver's default, the URDF says 0.15.
@@ -144,12 +221,12 @@ class RoverEKFNode(Node):
         self.sub_rr_motor = self.create_subscription(Float32, '/motor/rear_right', self.rr_motor_cb, 10)
 
         self.fl_v, self.fr_v, self.rl_v, self.rr_v = 0.0, 0.0, 0.0, 0.0
-        self.last_motor_time = None          # monotonic time of the last /motor/* message
+        self.last_motor_time = None          # ROS clock seconds of the last /motor/* message
         self.measured_speed = 0.0
-        self.last_wheel_state_time = None    # monotonic time of the last /wheel_states message
+        self.last_wheel_state_time = None    # ROS clock seconds of the last /wheel_states message
         self.sub_wheel_states = self.create_subscription(
             JointState, str(self.get_parameter('topic_wheel_states').value), self.wheel_states_cb, 10)
-        self.last_predict_time = time.monotonic()
+        self.last_predict_time = None
 
         # Publishers & TF Broadcaster
         self.pub_odom = self.create_publisher(Odometry, self.topic_ekf_odom, 10)
@@ -164,77 +241,85 @@ class RoverEKFNode(Node):
             f"Fusing Wheel Odometry, IMU ({self.topic_imu_euler}), and GPS ({self.topic_gps_fix})."
         )
 
-    def fl_motor_cb(self, msg): self.fl_v = msg.data; self.last_motor_time = time.monotonic()
-    def fr_motor_cb(self, msg): self.fr_v = msg.data; self.last_motor_time = time.monotonic()
-    def rl_motor_cb(self, msg): self.rl_v = msg.data; self.last_motor_time = time.monotonic()
-    def rr_motor_cb(self, msg): self.rr_v = msg.data; self.last_motor_time = time.monotonic()
+    def _now_sec(self) -> float:
+        return self.get_clock().now().nanoseconds * 1e-9
+
+    def _stamp_now_if_valid(self):
+        now_s = self._now_sec()
+        return now_s if now_s > 0.0 else None
+
+    def fl_motor_cb(self, msg):
+        if math.isfinite(msg.data):
+            self.fl_v = float(msg.data)
+            self.last_motor_time = self._stamp_now_if_valid()
+
+    def fr_motor_cb(self, msg):
+        if math.isfinite(msg.data):
+            self.fr_v = float(msg.data)
+            self.last_motor_time = self._stamp_now_if_valid()
+
+    def rl_motor_cb(self, msg):
+        if math.isfinite(msg.data):
+            self.rl_v = float(msg.data)
+            self.last_motor_time = self._stamp_now_if_valid()
+
+    def rr_motor_cb(self, msg):
+        if math.isfinite(msg.data):
+            self.rr_v = float(msg.data)
+            self.last_motor_time = self._stamp_now_if_valid()
 
     def wheel_states_cb(self, msg: JointState):
-        """Measured wheel angular speeds (rad/s); forward speed = mean of the reporting wheels x radius."""
-        speeds = [v for v in msg.velocity if math.isfinite(v)]
-        if len(speeds) < 2:
-            return   # one wheel alone (or a slipping one) is too little to trust
-        self.measured_speed = sum(speeds) / len(speeds) * self.wheel_radius
-        self.last_wheel_state_time = time.monotonic()
+        """Measured wheel angular speeds (rad/s); balanced across left/right sides x radius."""
+        forward_omega = compute_wheel_forward_omega(msg.name, msg.velocity)
+        if forward_omega is None:
+            return
+        self.measured_speed = forward_omega * self.wheel_radius
+        self.last_wheel_state_time = self._stamp_now_if_valid()
 
     def imu_euler_callback(self, msg: Vector3):
         """Measurement update for IMU Orientation (Yaw, Roll, Pitch)."""
+        if not (math.isfinite(msg.x) and math.isfinite(msg.y) and math.isfinite(msg.z)):
+            return
         self.last_imu_roll = math.radians(msg.x)
         self.last_imu_pitch = math.radians(msg.y)
         imu_yaw_rad = wrap_angle_rad(math.radians(msg.z) + self.imu_yaw_offset)   # to ENU
 
-        # Update theta_yaw only. (This used to add the state's own omega as a second "measurement":
-        # zero innovation, but it still shrank P and made the filter over-confident in omega.)
-        z = np.array([imu_yaw_rad])
-        H = np.array([[0, 0, 1, 0, 0]])
-
-        y = z - H @ self.x
-        y[0] = wrap_angle_rad(y[0])
-
-        S = H @ self.P @ H.T + self.R_imu[0:1, 0:1]
-        K = self.P @ H.T @ np.linalg.inv(S)
-        self.x = self.x + K @ y
-        self.x[2] = wrap_angle_rad(self.x[2])
-        self.P = (np.eye(5) - K @ H) @ self.P
+        H = np.array([[0.0, 0.0, 1.0, 0.0, 0.0]])
+        y = np.array([wrap_angle_rad(imu_yaw_rad - float(self.x[2]))])
+        self.x, self.P = joseph_update(self.x, self.P, H, y, self.R_imu[0:1, 0:1], wrap_angle_idx=2)
 
     def imu_raw_callback(self, msg: Imu):
         """Measurement update for IMU Angular Velocity."""
         omega_z = msg.angular_velocity.z
-        # Only the yaw rate is measured here. (Feeding the state's own theta back in as a
-        # "measurement" gives zero innovation but still shrinks P, making the filter over-confident.)
-        z = np.array([omega_z])
-        H = np.array([[0, 0, 0, 0, 1]])
-        y = z - H @ self.x
-        S = H @ self.P @ H.T + self.R_imu[1:2, 1:2]
-        K = self.P @ H.T @ np.linalg.inv(S)
-        self.x = self.x + K @ y
-        self.P = (np.eye(5) - K @ H) @ self.P
+        if not math.isfinite(omega_z):
+            return
+        H = np.array([[0.0, 0.0, 0.0, 0.0, 1.0]])
+        y = np.array([float(omega_z)]) - H @ self.x
+        self.x, self.P = joseph_update(self.x, self.P, H, y, self.R_imu[1:2, 1:2])
 
     def cmd_vel_callback(self, msg: Twist):
         """Measurement update from linear velocity command or wheel odometry."""
-        v_wheel = msg.linear.x
-        self.update_wheel_odometry(v_wheel)
+        if math.isfinite(msg.linear.x):
+            self.update_wheel_odometry(float(msg.linear.x))
 
     def update_wheel_odometry(self, v_wheel: float, R=None):
         """Apply EKF measurement update for forward speed v_wheel (R defaults to the command noise)."""
+        if not math.isfinite(v_wheel):
+            return
         if R is None:
             R = self.R_wheel
-        z = np.array([v_wheel])
-        H = np.array([[0, 0, 0, 1, 0]])
-        y = z - H @ self.x
-        S = H @ self.P @ H.T + R
-        K = self.P @ H.T @ np.linalg.inv(S)
-        self.x = self.x + K @ y
-        self.P = (np.eye(5) - K @ H) @ self.P
+        H = np.array([[0.0, 0.0, 0.0, 1.0, 0.0]])
+        y = np.array([float(v_wheel)]) - H @ self.x
+        self.x, self.P = joseph_update(self.x, self.P, H, y, R)
 
     def gps_fix_callback(self, msg: NavSatFix):
         """Measurement update for absolute GPS Position."""
-        if msg.status.status < 0 or np.isnan(msg.latitude) or np.isnan(msg.longitude):
+        if msg.status.status < 0 or not (math.isfinite(msg.latitude) and math.isfinite(msg.longitude)):
             return
         if abs(msg.latitude) < 1e-4 and abs(msg.longitude) < 1e-4:
             return
 
-        # Set reference origin on first valid GPS fix
+        # Set reference origin on first valid GPS fix when no external datum was supplied
         if self.gps_origin is None:
             self.gps_origin = (msg.latitude, msg.longitude, msg.altitude)
             self.get_logger().info(
@@ -242,75 +327,43 @@ class RoverEKFNode(Node):
             )
             return
 
-        # Convert Lat/Lon to local ENU Cartesian coordinates (x_east, y_north)
         lat0, lon0, _ = self.gps_origin
-        r_earth = 6371000.0
-        dlat = math.radians(msg.latitude - lat0)
-        dlon = math.radians(msg.longitude - lon0)
+        x_east, y_north = wgs84_enu_offset(msg.latitude, msg.longitude, lat0, lon0)
 
-        x_east = dlon * r_earth * math.cos(math.radians(lat0))
-        y_north = dlat * r_earth
-
-        # EKF Measurement Update for GPS position [X, Y]
         z = np.array([x_east, y_north])
         H = np.array([
-            [1, 0, 0, 0, 0],
-            [0, 1, 0, 0, 0]
+            [1.0, 0.0, 0.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0, 0.0, 0.0],
         ])
         y = z - H @ self.x
-        # Use the receiver's covariance when the bridge provides one (from HDOP and fix quality), so an
-        # RTK fix is trusted more than a standalone one; otherwise the fixed R_gps.
         R = self.R_gps
         if msg.position_covariance_type != NavSatFix.COVARIANCE_TYPE_UNKNOWN:
             var_e, var_n = msg.position_covariance[0], msg.position_covariance[4]
             if var_e > 0.0 and var_n > 0.0 and np.isfinite(var_e) and np.isfinite(var_n):
                 R = np.diag([var_e, var_n])
-        S = H @ self.P @ H.T + R
-        K = self.P @ H.T @ np.linalg.inv(S)
-        self.x = self.x + K @ y
-        self.P = (np.eye(5) - K @ H) @ self.P
+        self.x, self.P = joseph_update(self.x, self.P, H, y, R)
 
     def timer_ekf_loop(self):
-        """EKF Prediction Step & State Output Loop."""
-        # Measured step: timers jitter and stall under load, and a fixed 1/frequency step then
-        # mis-scales every motion. Clamped so one long stall cannot throw the pose far.
-        now_mono = time.monotonic()
-        dt = min(max(now_mono - self.last_predict_time, 0.0), 0.5)
-        self.last_predict_time = now_mono
+        """EKF Prediction Step, synchronous wheel measurement update, and state publication."""
+        now_s = self._now_sec()
+        if now_s <= 0.0:
+            return
+        if self.last_predict_time is None:
+            self.last_predict_time = now_s
+            dt = self.dt
+        else:
+            dt = min(max(now_s - self.last_predict_time, 0.0), 0.5)
+            self.last_predict_time = now_s
 
-        # Wheel speed from the motor commands while they are fresh (same 0.5 s as the drive deadman).
-        # Zero is information too: it used to be skipped, so a stopped rover kept coasting on v.
-        # Measured VESC wheel speed is preferred; commands are the fallback.
-        if self.last_wheel_state_time is not None and now_mono - self.last_wheel_state_time < 0.3:
+        # 1. Predict forward before applying current-tick wheel speed so steady velocity is not shrunk by decay
+        self.x, self.P = predict_unicycle_state(self.x, self.P, self.Q, dt, self.dt)
+
+        # 2. Wheel speed update (measured VESC/joint speeds preferred; motor commands as fallback)
+        if self.last_wheel_state_time is not None and 0.0 <= (now_s - self.last_wheel_state_time) < 0.3:
             self.update_wheel_odometry(self.measured_speed, self.R_wheel_measured)
-        elif self.last_motor_time is not None and now_mono - self.last_motor_time < 0.5:
-            command = ((self.fl_v + self.rl_v) + (self.fr_v + self.rr_v)) * 0.25  # mean of the four wheels
+        elif self.last_motor_time is not None and 0.0 <= (now_s - self.last_motor_time) < 0.5:
+            command = ((self.fl_v + self.rl_v) + (self.fr_v + self.rr_v)) * 0.25
             self.update_wheel_odometry(command * self.speed_per_command)
-
-        # EKF State Prediction: f(x_k, dt)
-        X, Y, theta, v, omega = self.x[0], self.x[1], self.x[2], self.x[3], self.x[4]
-
-        # Position updated along heading theta
-        X_next = X + v * math.cos(theta) * dt
-        Y_next = Y + v * math.sin(theta) * dt
-        theta_next = wrap_angle_rad(theta + omega * dt)
-        decay = 0.98 ** (dt / self.dt)   # slight velocity damping, 0.98 per nominal step
-        v_next = v * decay
-        omega_next = omega * decay
-
-        self.x = np.array([X_next, Y_next, theta_next, v_next, omega_next])
-
-        # State Transition Jacobian Matrix F (5x5)
-        F = np.array([
-            [1.0, 0.0, -v * math.sin(theta) * dt, math.cos(theta) * dt, 0.0],
-            [0.0, 1.0,  v * math.cos(theta) * dt, math.sin(theta) * dt, 0.0],
-            [0.0, 0.0, 1.0, 0.0, dt],
-            [0.0, 0.0, 0.0, decay, 0.0],
-            [0.0, 0.0, 0.0, 0.0, decay]
-        ])
-
-        # Covariance Prediction: P = F * P * F^T + Q, with Q tuned per nominal step and scaled by the real step
-        self.P = F @ self.P @ F.T + self.Q * (dt / self.dt)
 
         # Publish Fused EKF Outputs
         now = self.get_clock().now().to_msg()
@@ -339,6 +392,11 @@ class RoverEKFNode(Node):
         pose_cov[5, 5] = self.P[2, 2]
         odom.pose.covariance = pose_cov.flatten().tolist()
 
+        twist_cov = np.zeros((6, 6))
+        twist_cov[0, 0] = self.P[3, 3]
+        twist_cov[5, 5] = self.P[4, 4]
+        odom.twist.covariance = twist_cov.flatten().tolist()
+
         self.pub_odom.publish(odom)
 
         # 2. Publish Filtered Euler Angles (in degrees)
@@ -348,19 +406,20 @@ class RoverEKFNode(Node):
         euler_vec.z = float(math.degrees(self.x[2]))
         self.pub_euler.publish(euler_vec)
 
-        # 3. Broadcast TF Transform (odom -> base_link)
-        tf_stamped = TransformStamped()
-        tf_stamped.header.stamp = now
-        tf_stamped.header.frame_id = self.frame_id
-        tf_stamped.child_frame_id = self.child_frame_id
-        tf_stamped.transform.translation.x = float(self.x[0])
-        tf_stamped.transform.translation.y = float(self.x[1])
-        tf_stamped.transform.translation.z = 0.0
-        tf_stamped.transform.rotation.x = qx
-        tf_stamped.transform.rotation.y = qy
-        tf_stamped.transform.rotation.z = qz
-        tf_stamped.transform.rotation.w = qw
-        self.tf_broadcaster.sendTransform(tf_stamped)
+        # 3. Broadcast TF Transform (odom -> base_link) when EKF owns that TF edge
+        if self.publish_tf:
+            tf_stamped = TransformStamped()
+            tf_stamped.header.stamp = now
+            tf_stamped.header.frame_id = self.frame_id
+            tf_stamped.child_frame_id = self.child_frame_id
+            tf_stamped.transform.translation.x = float(self.x[0])
+            tf_stamped.transform.translation.y = float(self.x[1])
+            tf_stamped.transform.translation.z = 0.0
+            tf_stamped.transform.rotation.x = qx
+            tf_stamped.transform.rotation.y = qy
+            tf_stamped.transform.rotation.z = qz
+            tf_stamped.transform.rotation.w = qw
+            self.tf_broadcaster.sendTransform(tf_stamped)
 
 
 def main(args=None):

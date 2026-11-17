@@ -23,6 +23,34 @@ except ImportError:
     ADAFRUIT_AVAILABLE = False
 
 
+def body_to_world_rotation(roll: float, pitch: float, yaw: float) -> np.ndarray:
+    """ZYX intrinsic Euler rotation matrix R_nb transforming body-frame vectors to world ENU."""
+    cr, sr = np.cos(roll), np.sin(roll)
+    cp, sp = np.cos(pitch), np.sin(pitch)
+    cy, sy = np.cos(yaw), np.sin(yaw)
+    return np.array([
+        [cy * cp, cy * sp * sr - sy * cr, cy * sp * cr + sy * sr],
+        [sy * cp, sy * sp * sr + cy * cr, sy * sp * cr - cy * sr],
+        [-sp,     cp * sr,                cp * cr],
+    ])
+
+
+def euler_rate_matrix(roll: float, pitch: float) -> np.ndarray:
+    """Transform body angular velocity [p, q, r] to ZYX Euler rates [droll, dpitch, dyaw]/dt."""
+    sr, cr = np.sin(roll), np.cos(roll)
+    cp = np.cos(pitch)
+    # Clamp away from +/-90 deg gimbal lock singularity
+    if abs(cp) < 1e-3:
+        cp = 1e-3 if cp >= 0.0 else -1e-3
+    sp = np.sin(pitch)
+    tp = sp / cp
+    return np.array([
+        [1.0, sr * tp, cr * tp],
+        [0.0, cr,      -sr],
+        [0.0, sr / cp, cr / cp],
+    ])
+
+
 def euler_rad_to_quaternion(roll_rad: float, pitch_rad: float, yaw_rad: float):
     """convert euler angles in radians (roll, pitch, yaw) to quaternion (x, y, z, w)."""
     r, p, y = roll_rad, pitch_rad, yaw_rad
@@ -74,6 +102,8 @@ class KalmanFilterNode(Node):
 
         # get parameter values
         self.dt = float(self.get_parameter('dt').value)
+        self.step_dt = self.dt
+        self.last_obs_stamp_ns = None
         self.topic_raw_imu = str(self.get_parameter('topic_raw_imu').value)
         self.topic_filtered_imu = str(self.get_parameter('topic_filtered_imu').value)
         self.topic_odom = str(self.get_parameter('topic_odom').value)
@@ -126,27 +156,25 @@ class KalmanFilterNode(Node):
         )
 
     def transition_function(self, state):
-        """state transition function (15x15 system model with gravity compensation and velocity damping)."""
-        dt = self.dt
+        """state transition function (15x15 system model with gravity compensation and world-frame rotation)."""
+        dt = self.step_dt
         new_state = np.copy(state)
 
-        # gravity compensation: gravity expressed in the body frame from roll/pitch. (It used to subtract
-        # 9.81 along body z only, so any tilt leaked 9.81*sin(tilt) into the horizontal acceleration.)
-        roll, pitch = state[9], state[10]
-        gravity_body = 9.81 * np.array([-np.sin(pitch),
-                                        np.sin(roll) * np.cos(pitch),
-                                        np.cos(roll) * np.cos(pitch)])
-        accel_motion = state[6:9] - gravity_body
+        roll, pitch, yaw = state[9], state[10], state[11]
+        gravity_body = 9.81 * np.array([
+            -np.sin(pitch),
+            np.sin(roll) * np.cos(pitch),
+            np.cos(roll) * np.cos(pitch),
+        ])
+        accel_motion_body = state[6:9] - gravity_body
+        accel_world = body_to_world_rotation(roll, pitch, yaw) @ accel_motion_body
 
-        # apply velocity damping factor (e.g. 0.95) to prevent unbounded velocity crawl from sensor bias
+        # Apply velocity damping to bound bias-driven double integration
         velocity_damped = state[3:6] * self.velocity_damping
 
-        # position updated by damped velocity and 0.5 * motion_accel * dt^2
-        new_state[0:3] += velocity_damped * dt + 0.5 * accel_motion * (dt ** 2)
-        # velocity updated by motion_accel * dt
-        new_state[3:6] = velocity_damped + accel_motion * dt
-        # orientation (roll, pitch, yaw in radians) updated by gyro * dt
-        new_state[9:12] += state[12:15] * dt
+        new_state[0:3] += velocity_damped * dt + 0.5 * accel_world * (dt ** 2)
+        new_state[3:6] = velocity_damped + accel_world * dt
+        new_state[9:12] += (euler_rate_matrix(roll, pitch) @ state[12:15]) * dt
 
         return new_state
 
@@ -201,6 +229,20 @@ class KalmanFilterNode(Node):
 
     def process_observation(self, accel: np.ndarray, gyro: np.ndarray, timestamp=None, euler=None):
         """step the unscented kalman filter with an observation [accel, gyro] (+ [roll, pitch, yaw] in rad)."""
+        if not (np.all(np.isfinite(accel)) and np.all(np.isfinite(gyro))):
+            return
+        if euler is not None and not np.all(np.isfinite(euler)):
+            return
+
+        if timestamp is not None and hasattr(timestamp, 'sec') and hasattr(timestamp, 'nanosec'):
+            stamp_ns = int(timestamp.sec) * 1_000_000_000 + int(timestamp.nanosec)
+            if stamp_ns > 0:
+                if self.last_obs_stamp_ns is not None:
+                    dt_measured = (stamp_ns - self.last_obs_stamp_ns) * 1e-9
+                    if 1e-3 <= dt_measured <= 0.5:
+                        self.step_dt = dt_measured
+                self.last_obs_stamp_ns = stamp_ns
+
         if self.use_orientation:
             if euler is None:
                 return   # no orientation (direct-sensor mode reads no quaternion): nothing consistent to fuse
