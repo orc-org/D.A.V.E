@@ -23,6 +23,9 @@ fi
 git -C FAST_LIO fetch -q origin ROS2
 git -C FAST_LIO checkout -q "$FAST_LIO_COMMIT"
 git -C FAST_LIO submodule update --init --recursive
+# drop unused pcl_ros CMake dependency (FAST_LIO only uses pcl_conversions + PCL common/io/filters + tf2_ros)
+sed -i 's/find_package(pcl_ros REQUIRED)/find_package(tf2_ros REQUIRED)/; s/  pcl_ros/  tf2_ros/; s/find_package(PCL REQUIRED COMPONENTS common io)/find_package(PCL REQUIRED COMPONENTS common io filters kdtree)/' FAST_LIO/CMakeLists.txt
+sed -i 's/<depend>pcl_ros<\/depend>/<depend>tf2_ros<\/depend>/' FAST_LIO/package.xml
 rm -rf livox_ros_driver2_stub
 cp -r "$HERE/livox_ros_driver2_stub" livox_ros_driver2_stub
 
