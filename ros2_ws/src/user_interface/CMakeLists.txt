@@ -27,37 +27,20 @@ if(NOT raylib_FOUND)
   FetchContent_MakeAvailable(raylib)
 endif()
 
-FetchContent_Declare(
-  raygui
-  GIT_REPOSITORY https://github.com/raysan5/raygui.git
-  GIT_PROGRESS TRUE
-)
-FetchContent_MakeAvailable(raygui)
+# FetchContent_Declare(
+#   raygui
+#   GIT_REPOSITORY https://github.com/raysan5/raygui.git
+#   GIT_PROGRESS TRUE
+# )
+# FetchContent_MakeAvailable(raygui)
 
-add_executable(main
-  src/main.cpp
-  src/LaunchNode.cpp
-)
-target_include_directories(main PUBLIC
+add_executable(LaunchNode src/LaunchNode.cpp)
+target_include_directories(LaunchNode PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
   $<INSTALL_INTERFACE:include>
   ${raygui_SOURCE_DIR})
-target_compile_features(main PUBLIC c_std_99 cxx_std_17)  # Require C99 and C++17
-target_link_libraries(main raylib)
-ament_target_dependencies(main rclcpp)
-if(TARGET raygui)
-  target_link_libraries(main raygui)
-endif()
-
-install(TARGETS
-  main
-  DESTINATION lib/${PROJECT_NAME})
-
-
-
-install(FILES include/user_interface/LaunchNode.hpp
-  DESTINATION include/user_interface)
-
+target_compile_features(LaunchNode PUBLIC c_std_99 cxx_std_17)  # Require C99 and C++17
+ament_target_dependencies(LaunchNode rclcpp)
 ament_export_include_directories(include)
 ament_export_dependencies(rclcpp)
 

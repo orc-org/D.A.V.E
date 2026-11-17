@@ -1,6 +1,7 @@
 #pragma once
 
 #include "rclcpp/rclcpp.hpp"
+#include "Layout.hpp"
 
 /*
 	LaunchNode
@@ -14,6 +15,14 @@ class LaunchNode : public rclcpp::Node
 public: 
 
     LaunchNode();
+
+	/*
+		DisplayGUI
+		------------
+		function that will handle the drawing and updating of our graphical user interface
+		this will be run in it's own thread so as to not interfere with any ros2 timers
+	*/
+	void DisplayGUI();
 
 private:
 

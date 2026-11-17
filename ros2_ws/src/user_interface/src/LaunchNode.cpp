@@ -9,3 +9,13 @@ LaunchNode::LaunchNode() : rclcpp::Node("LaunchNode")
 {
 	std::cout << "Great Success" << std::endl;
 }
+
+int main(int argc, char** argv) {
+    (void)argc;
+    (void)argv;
+
+    rclcpp::init(argc, argv);
+    rclcpp::spin(std::make_shared<LaunchNode>());
+    rclcpp::shutdown();
+    return 0;
+}
