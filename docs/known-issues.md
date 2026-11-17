@@ -64,32 +64,26 @@ Three groups: what was fixed while consolidating the repository, what is still o
 | | No wheel speed feedback: the EKF fused motor commands as if measured | `vesc_can_driver_node` reads VESC CAN STATUS frames → `/wheel_states`; `rover_ekf` prefers it (enable CAN status on the VESCs) |
 | Docs | `slam/architecture.md` gave the Unitree driver's frames as `lidar_link`/`lidar_imu_link` (those are the canonical names); the SDK uses `unilidar_lidar`/`unilidar_imu` | Corrected |
 
-## 2. Open — needs measurement or a team decision
+## 2. Open — needs hardware verification, measurement, or autonomy development
 
-1. **Trigger direction.** The ported `drive_node` makes the *left* trigger forward and the *right* trigger backward (the earlier firmware had them the other way). Confirm with whoever drives before the next field test.
-2. **Wheel radius.** `vesc_can_driver_node` defaults to 0.10 m but `physical_params.yaml` (and so the URDF/simulation) says 0.15 m. Commanded ground speed is off by 1.5× if the wrong one is used. Measure the real wheel.
-3. **Speed ceiling.** In metric mode the ERPM is not clamped to `max_erpm` (7000). A full-stick command (1.0 m/s) asks for ≈ 9549 ERPM. Decide whether to clamp.
-4. **Yaw convention.** `rover_ekf` now converts the north-tared IMU yaw to ENU (`imu_yaw_offset_deg` = 90). Check once on the rover that `/imu/euler` yaw increases on a left turn ([state-estimation.md](state-estimation.md#still-to-check-on-the-rover)).
-5. **Coordinate origins.** The EKF's origin is its first GPS fix unless `datum_latitude`/`datum_longitude` are set; set them to `NAVnode`'s home so both use one frame (nothing sets them automatically yet).
-6. **TF.** Resolved: with the EKF running, `motion_coordinator` publishes `world → odom` instead of a second parent for `base_link`.
-7. **Pin map.** Pin 37 (servo 2) is not in the device-tree overlay; pin 15 is in the overlay but no longer used; pin 32 is claimed by both the gripper STEP and the Morse servo test. Confirm the wiring (see [hardware.md](hardware.md)).
-8. **Arm step rate.** The step frequency is floored at 10 kHz, which makes the arm move at ≈ 0.785 rad/s rather than the nominal 0.5 rad/s unless the Arduino firmware limits it.
-9. **Battery gauge.** The dashboard subscribes to `/battery/status`, but `battery_monitor_node` (a BLE BMS reader that needed an uninstalled `battery` module) was deleted as deprecated in the cleanup. Either restore it with its dependency or remove the gauge.
-10. **Shared serial ports.** `gps_bridge_node`, `NAVnode` and `morse_bridge_node` all default to `/dev/ttyUSB0`. Assign stable device names.
-11. **Licences.** The repository is MIT. Several packages still declare Apache-2.0 and many maintainer emails are placeholders (`@todo.todo`, `@example.com`). Decide on one licence.
-12. **Dashboard map tiles and rosbridge.** The libraries are now local, but offline map tiles for the competition site must be prepared into `dashboard/tiles/` ([dashboard/vendor/README.md](../dashboard/vendor/README.md#map-tiles)). rosbridge is unauthenticated.
-13. **Script findings left open** (need the hardware or a design decision):
-    - `test_dm556y_steppers.py` drives pins 15 (STEP) and 13 (DIR); its docstring says 15 and 7, the arm node uses 33/18 and the gripper 32/13. Confirm the wiring before running it.
-    - `NAVnode` writes `captains log <date>.txt` into `src/navigation_system/captainsLogs` **relative to the current directory**, so the location depends on where the node was started.
-    - `morse_recorder.py` assumes the first pulse is a dot and judges every later pulse against the shortest seen, so a message that starts with a dash decodes wrongly; it also times pulses with `time.time()` (wall clock, not monotonic), reads and writes its buffer from two threads without a lock, and calls `cv2.imshow` from the capture thread.
-    - `video_streamer.py`: `--width`/`--height` are strings (the `--ros-args` failure is fixed).
-    - `receive_stream.bat` exits with code 0 on an unknown option.
-    - `sim_drive_bridge.py` multiplies `/cmd_vel` by `max_linear_speed`/`max_angular_speed`, which is right only because this repository treats `/cmd_vel` as normalised (−1…1, as `drive_node` does), not as m/s.
-    - `start_sim_system.sh` / `start_dashboard_system.sh` write logs to fixed `/tmp` files and do not stop `rosapi`; the sim script only warns about dead children.
-    - `pyflakes` also reports unused imports/variables in several nodes (`kalman_filter.py`, `telemetry.py`, `arm_stepper_*_driver_node.py`, `motion_coordinator_node.py`, `input_viewer.py`, `gps_bridge_node.py`); none affect behaviour.
-    - `dashboard/app.js` was not linted (no Node.js in the environment).
-14. **Code-review findings left open** are listed with severity and the CIRC task they block in [code-review.md](code-review.md) (the IMU filter's double integration, frame and origin conflicts, and the rest).
-15. **Removed as deprecated by the cleanup branch:** `GPSnode.cpp` (an older 840-line GPS node, superseded by `gps_bridge_node.py` and the serial code in `NAVnode`), `vesc_driver_node.cpp` (serial VESC driver), `stepper_driver_node.cpp`, `py_node.py`, `module_to_import.py`, `battery_monitor_node.py`, and the committed `jetson_morse` binary and `.dtbo` files. They are in git history if needed.
+1. **Physical wheel radius (`0.10 m` vs `0.15 m`).** `vesc_can_driver_node` and `rover_ekf` still default to `0.10 m` for hardware, while `physical_params.yaml`, URDF, and `sim.launch.py` use `0.15 m`. Measure the real tire before driving outdoors and update whichever disagrees.
+2. **Drive hardware bench check (R2/L2, brake hold, ERPM clamp).** Software now defaults to `right_trigger_forward:=true` (R2 forward, matching `dashboard/app.js`), guards `axes.size() < 6`, aligns SI `/cmd_vel`, clamps metric ERPM, and sends `CAN_PACKET_SET_CURRENT_BRAKE` (`5.0 A`) on timeout/zero; **still untested on elevated physical wheels with SocketCAN VESCs**.
+3. **IMU hardware check (`imu_yaw_offset_deg` & magnetometer).** `telemetry.py` now defaults to 6-DoF `BNO_REPORT_GAME_ROTATION_VECTOR` (`use_magnetometer:=false`) with strict `read_failures` counting, and `imu.launch.py` disables the redundant AUKF (`run_kalman_filter:=false`); still confirm on the physical BNO085 that yaw increases on CCW turn and verify tare alignment against GPS outdoors.
+4. **Planar EKF limitation & 3-D slope navigation.** Software fixes (ROS clock sync, Joseph covariance form, predict-before-update, L/R wheel pairing, WGS-84 offsets, `publish_tf` param) are verified in unit tests and Gazebo, **but** `rover_ekf` remains a planar 5-state `[X, Y, θ, v, ω]` filter (not full 3-D `robot_localization` or LiDAR-fused `SE(3)`).
+5. **Hardware pin & serial port collisions.** Pin 37 is absent from `dave_custom_pins.dts`, Pin 15 is unused in the overlay, Pin 32 is claimed by both `gripper_step_pin` and `jetson_morse.cpp`, `test_dm556y_steppers.py` uses pins `15/13` vs node defaults `33/18`, and `gps_bridge_node` / serial-mode `NAVnode` / `morse_bridge_node` default to `/dev/ttyUSB0` (avoidable on GNSS by setting `use_gps_fix_topic:=true` on `NAVnode` or assigning `udev` rules).
+6. **Arm open-loop step rate & hardware.** Software unit/clock/blocking bugs (`current_gripper_pos`, `1.0 - step/max` direction, `MultiThreadedExecutor` + cancelable 15s action loop, daemon-thread Arduino reconnect, `*_invert_dir` separation, `/gripper_state` step normalization in `motion_coordinator`) are fixed; physical Jetson `100 kHz` GPIO step-rate floor and open-loop lack of limit switches/encoders remain open on hardware.
+7. **Battery gauge & dashboard linting.** The dashboard subscribes to `/battery/status`, which has no live publisher; offline competition tiles must be populated into `dashboard/tiles/`; `dashboard/app.js` has not been CI-linted (no Node.js in WSL env); rosbridge is unauthenticated.
+8. **Script findings left open** (need hardware verification or design choices):
+   - `test_dm556y_steppers.py`: confirm physical pin wiring (`15/13` vs `33/18`, `32/13`) before powering steppers.
+   - `NAVnode`: still writes `captains log <date>.txt` into `src/navigation_system/captainsLogs` relative to CWD.
+   - `morse_recorder.py`: assumes first pulse is a dot, uses wall clock `time.time()`, and calls `cv2.imshow` without mutex protection from the capture thread.
+   - `video_streamer.py`: `--width`/`--height` remain strings; `receive_stream.bat` exits `0` on unknown option.
+   - `start_sim_system.sh` / `start_dashboard_system.sh`: write logs to fixed `/tmp` paths and do not stop `rosapi`.
+   - `pyflakes` unused imports/variables in legacy scripts do not affect behavior.
+9. **Gazebo & Unitree L2 hardware gaps:**
+   - Gazebo simulates flat-yard planar driving only (no rough terrain slip, no rolling helical L2 scan timing — `lidar_point_time.py` uses `1e-6 s`), and `rover_arm.xacro` stays disabled until its CAD offset vs `lidar_link` (`x=0, z=0.40`) is resolved.
+   - Unitree L2 physical bring-up (`unilidar_sdk2`, `192.168.1.2` vs DDS subnet, Jetson `tegrastats`, open uneven terrain Z-drift) remains untested on hardware.
+10. **Removed as deprecated by the cleanup branch:** `GPSnode.cpp`, `vesc_driver_node.cpp`, `stepper_driver_node.cpp`, `py_node.py`, `module_to_import.py`, `battery_monitor_node.py`, and binary artifacts (`jetson_morse`, `.dtbo`). They remain in git history if needed.
 
 ## 3. Incomplete by design
 
@@ -100,7 +94,7 @@ Three groups: what was fixed while consolidating the repository, what is still o
 - **The IMU filter's position is not usable** (body-frame double integration), so `/imu/odometry` is off by default; its orientation now follows the BNO085. See [state-estimation.md](state-estimation.md).
 - **Arm control is open loop.** Auto mode runs inverse kinematics against the EKF pose when `/ekf/odometry` is fresh (otherwise a pose integrated from wheel commands, for visualisation), and moves the arm only unless `allow_base_motion:=true`; the stepper position is open loop. See [arm-and-kinematics.md](arm-and-kinematics.md).
 - **`move_to_point` is a stub** that reports success without waiting for the motion.
-- **Tests.** There are lint tests only, plus the new coordinate-conversion test. Nothing exercises the C++ navigation, the EKF or the arm.
+- **Tests.** Core packages carry behavioral GTest/pytest suites (`test_drive_math`, `test_nav_math`, `test_ekf_math`, `test_imu_math`, `test_arm_math`, `scripts/slam/test_eval_trajectory.py`) alongside `waypoint_conversion_test.cpp` and `navnode_nmea_smoke_test.sh`. Hardware drivers (CAN, I²C, UART, GPIO) and `dashboard/app.js` remain unverified by CI/physical bench tests.
 
 ## 4. The missing layer: perception and SLAM
 

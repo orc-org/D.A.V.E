@@ -6,6 +6,10 @@ Each page was written from the source, not from the old per-package READMEs, whi
 
 | Page | What it covers |
 |---|---|
+| [system-handover.md](system-handover.md) | **Technical takeover manual**: subsystem maturity, topic/TF/unit/clock contracts, hardware clashes, simulator vs. real-rover gaps, pre-drive bench runbook |
+| [guardrails-and-limits.md](guardrails-and-limits.md) | **Safety guardrails & limits**: active vs. missing interlocks, verified timers/timeouts/rates, DDS/Jetson/L2 resource budgets, operational cautions |
+| [engineering-diary.md](engineering-diary.md) | **Chronological diary & fix audit**: commit-by-commit rationale, necessity & literature critique (`2924889`–`d56a23b` + `2026-11-16` audit) |
+| [remediation-roadmap.md](remediation-roadmap.md) | **Prioritized engineering backlog**: P0 physical safety blockers through P4 SLAM/simulation/testing gates |
 | [architecture.md](architecture.md) | Packages, how data flows between them, topic/service/action map |
 | [hardware.md](hardware.md) | Jetson header pinout, CAN, serial devices, device-tree overlays, network addresses |
 | [drive-system.md](drive-system.md) | Joystick mixing, VESC CAN protocol, the ERPM formula, ramping |
@@ -30,4 +34,4 @@ Each page was written from the source, not from the old per-package READMEs, whi
 
 ## Status of this documentation
 
-Nothing in this repository was compiled or run on a Jetson while writing these pages. The coordinate-conversion fixes described in [navigation.md](navigation.md) were checked with a small numeric test; everything else was read, not executed.
+All 16 ROS 2 packages (`NAVnode` headless without requiring `raylib`) and unit/smoke tests (`test_drive_math`, `test_nav_math`, `test_ekf_math`, `test_imu_math`, `test_arm_math`, `test_eval_trajectory.py`, `navnode_nmea_smoke_test.sh`, `waypoint_conversion_test.cpp`, `dashboard/vendor/fetch.sh --verify`) alongside headless Gazebo `use_sim_stack:=true` verification ran in WSL2 on `2026-11-16`. Hardware drivers (VESC CAN bus, physical BNO085 IMU, GNSS UART, DM556Y steppers, Jetson cameras, Unitree L2) have **not** yet been exercised on the physical rover. See [system-handover.md](system-handover.md) and [guardrails-and-limits.md](guardrails-and-limits.md) before energizing motors.

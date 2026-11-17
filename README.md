@@ -2,7 +2,13 @@
 
 Okanagan Rover Craft's first rover, built on the ROS 2 Humble Hawksbill framework and run on a Jetson Orin Nano.
 
-Full documentation is in [`docs/`](docs/README.md): architecture, hardware, the maths behind driving, navigation and state estimation, build instructions, and known issues. The SLAM/perception program (Jetson Orin Nano Super + Unitree LiDAR) is documented in [`docs/slam/`](docs/slam/README.md).
+Full documentation is in [`docs/`](docs/README.md). If you are taking over the project, start with:
+- [`docs/system-handover.md`](docs/system-handover.md) — technical onboarding, subsystem maturity, signal/TF/unit contracts, simulator vs. real-rover gaps, and pre-ground bench checks
+- [`docs/guardrails-and-limits.md`](docs/guardrails-and-limits.md) — safety guardrails (active vs. missing), timeouts, rates, latency limits, and DDS/Jetson budgets
+- [`docs/engineering-diary.md`](docs/engineering-diary.md) — chronological diary and commit-by-commit fix audit vs. robotics literature
+- [`docs/remediation-roadmap.md`](docs/remediation-roadmap.md) — prioritized backlog (`P0`–`P4`) of fixes, additions, and retirements
+
+The SLAM/perception program (Jetson Orin Nano Super + Unitree LiDAR) is documented in [`docs/slam/`](docs/slam/README.md).
 
 ## Repository layout
 

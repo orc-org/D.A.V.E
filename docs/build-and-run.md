@@ -28,7 +28,7 @@ colcon build --symlink-install
 
 ### Verified build status (WSL2, Ubuntu 22.04, Humble)
 
-All 16 packages build with the commands above. `navigation_system` needs `raylib`, which is not a ROS dependency: on Ubuntu 22.04 it was built from source into `~/opt/raylib` (static, no `sudo` install) and passed to CMake; see [slam/decisions.md](slam/decisions.md#status-of-the-wsl2-environment-set-up-2026-11-08) for the exact flags. `scripts/tests/navnode_nmea_smoke_test.sh` checks `NAVnode` end to end without hardware.
+All 16 packages build in WSL2 Humble (`NAVnode` now builds headless when `raylib` is absent; `NAVDisplay` builds automatically whenever `raylib` is installed, e.g. from `~/opt/raylib`). [`scripts/tests/navnode_nmea_smoke_test.sh`](../scripts/tests/navnode_nmea_smoke_test.sh) exercises `NAVnode` end to end without hardware, alongside GTest and pytest suites (`test_drive_math`, `test_nav_math`, `test_ekf_math`, `test_imu_math`, `test_arm_math`, and `scripts/slam/test_eval_trajectory.py`).
 
 ## One-command launchers
 
@@ -80,16 +80,18 @@ Pins, CAN IDs and serial ports are in [hardware.md](hardware.md). Standalone har
 
 ## Tests
 
-- `scripts/tests/waypoint_conversion_test.cpp` — no-ROS numeric test of the coordinate conversions; the build command is in the file header. It passes against the current `Waypoint.cpp`.
-- Four Python packages carry the standard ament lint tests (copyright, flake8, pep257). There are no behavioural tests for the drive, arm, EKF or navigation code.
+- `ros2_ws`: `colcon test --packages-select drive_package navigation_system rover_ekf imu arm_controller` runs C++ GTests (`test_drive_math` 4 cases, `test_nav_math` 3 cases), Python unit tests (`test_ekf_math` 4 cases, `test_imu_math` 1 case, `test_arm_math` 1 case), and ament lint/cmake/xml checks (`cppcheck` skipped where absent).
+- `scripts/tests/waypoint_conversion_test.cpp` — no-ROS numeric test of WGS-84 coordinate conversions.
+- `scripts/tests/navnode_nmea_smoke_test.sh` — end-to-end virtual-UART NMEA smoke test for `NAVnode` (including corrupted `*FF` checksum rejection, `ResetHome`, RMC speed, waypoint targeting, and `FollowRoute`).
+- `scripts/slam/test_eval_trajectory.py` — `pytest` suite covering `eval_trajectory.py` clock mismatch checks, vector loop closure, and SE(3) rotation metrics.
 
 ## SLAM data capture and benchmarking
 
-`scripts/slam/` holds helpers for recording datasets and logging Jetson load; see [`scripts/slam/README.md`](../scripts/slam/README.md) and [slam/research-plan.md](slam/research-plan.md). They have been syntax-checked only.
+`scripts/slam/` holds helpers for recording datasets and benchmarking SLAM; see [`scripts/slam/README.md`](../scripts/slam/README.md) and [slam/research-plan.md](slam/research-plan.md).
 
 ## Simulation
 
-`ros2 launch rover_description sim.launch.py` starts Gazebo, RViz, `robot_state_publisher`, the drive node and `sim_drive_bridge.py`, which re-publishes `/cmd_vel` as `/cmd_vel_sim` for the simulated skid-steer plugin. The robot model, including the arm (`rover_arm.xacro`), is parameterised from `physical_params.yaml`. See [`ros2_ws/src/rover_description/README.md`](../ros2_ws/src/rover_description/README.md).
+`ros2 launch rover_description sim.launch.py` starts Gazebo, RViz, `robot_state_publisher`, `drive_node`, and `sim_drive_bridge.py` (`cmd_vel_is_si:=true`, `wheel_separation:=0.60`). Pass `use_sim_stack:=true` to also run `sim_sensor_bridge.py`, `rover_ekf` (`wheel_radius:=0.15`, `publish_tf:=false`), and `NAVnode` (`use_gps_fix_topic:=true`) end to end in Gazebo. The robot model is parameterized from `physical_params.yaml` (`rover_arm.xacro` stays disabled until CAD offsets against `lidar_link` are resolved). See [`ros2_ws/src/rover_description/README.md`](../ros2_ws/src/rover_description/README.md).
 
 ### Simulated perception sensors
 

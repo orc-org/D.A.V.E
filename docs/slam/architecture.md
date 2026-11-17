@@ -127,7 +127,7 @@ map ──(GNSS alignment)──► odom ──(rover_ekf)──► base_link �
                                                     └──► camera_link ──► camera_optical_frame
 ```
 
-- `base_link → lidar_link` and `base_link → camera_link` are **measured extrinsics**, stored in a config file (planned: `ros2_ws/src/rover_slam/config/extrinsics.yaml`) and published by `robot_state_publisher`/static transforms. The URDF in `rover_description` should gain a LiDAR link so the model, RViz and the code agree.
+- `base_link → lidar_link` and `base_link → camera_link` are **measured extrinsics**, stored in a config file (planned: `ros2_ws/src/rover_slam/config/extrinsics.yaml`) and published by `robot_state_publisher`/static transforms. `rover_description/urdf/sensors.xacro` now defines `lidar_link`, `lidar_imu_link` (currently `[0, 0, -0.02]` m placeholder offset in sim rather than the real L2 `[−0.007698, −0.014655, 0.00667]` m), `camera_link`, and `camera_optical_frame`.
 - LiDAR–camera calibration (extrinsic rotation/translation) and **time offset** are required before any photometric work. No PPS or PTP was found for either Unitree sensor **[?]**, so measure the offset with a flashing-target or motion-correlation method and store it.
 - LiDAR–IMU: use the SDK transform, then verify with a rotation-only test.
 
@@ -178,4 +178,4 @@ Reference points: GS-LIVO on a 16 GB Orin NX reached about 3 Hz outdoors; Splatb
 
 - The dashboard process manager ([`dashboard_helper_node.py`](../../ros2_ws/src/arm_controller/arm_controller/dashboard_helper_node.py)) lists every managed node in one dictionary; new SLAM nodes get an entry there so they can be started from the browser.
 - `start_dashboard_system.sh` and `start_sim_system.sh` stay the entry points; a SLAM launch file (planned) would be started through the process manager rather than adding a third script.
-- The simulation ([rover_description](../../ros2_ws/src/rover_description/README.md)) needs a simulated LiDAR plugin before Layers 1–3 can be exercised without hardware **[I]**.
+- The simulation ([rover_description](../../ros2_ws/src/rover_description/README.md)) now includes Gazebo LiDAR, IMU and RGB-D plugins (`urdf/sensors.xacro`), though GPS, `/wheel_states`, `/imu/euler`, the arm URDF, and rolling scan-sweep timing remain unmodeled (see [`../system-handover.md`](../system-handover.md)).
