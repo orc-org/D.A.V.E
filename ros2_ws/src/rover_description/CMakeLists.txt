@@ -16,6 +16,7 @@ install(DIRECTORY
 # install executable python scripts
 install(PROGRAMS
   scripts/sim_drive_bridge.py
+  scripts/sim_sensor_bridge.py
   DESTINATION lib/${PROJECT_NAME}
 )
 

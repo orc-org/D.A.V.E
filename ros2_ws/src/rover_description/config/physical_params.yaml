@@ -34,6 +34,18 @@ sensors:
   lidar_max_range: 30.0
   lidar_noise_std: 0.02  # metres, from the L2 datasheet +-2 cm
   imu_rate_hz: 200
+  # IMU noise (Gazebo Gaussian model, per axis). ASSUMED consumer-MEMS values, pessimistic for vibration;
+  # not from the L2 datasheet. Set all to 0 for a perfect IMU. stddev = white noise per sample;
+  # bias = constant offset drawn at start (mean +- stddev); dynamic bias = slow random walk.
+  imu_gyro_noise_std: 0.002          # rad/s per sample at 200 Hz
+  imu_gyro_bias_mean: 0.003          # rad/s (about 0.17 deg/s)
+  imu_gyro_bias_std: 0.001           # rad/s
+  imu_gyro_dyn_bias_std: 0.0002      # rad/s
+  imu_accel_noise_std: 0.03          # m/s^2 per sample
+  imu_accel_bias_mean: 0.05          # m/s^2
+  imu_accel_bias_std: 0.02           # m/s^2
+  imu_accel_dyn_bias_std: 0.002      # m/s^2
+  imu_dyn_bias_corr_time: 300.0      # s
   # generic depth camera (model not chosen yet)
   camera_z: 0.10
   camera_rate_hz: 15

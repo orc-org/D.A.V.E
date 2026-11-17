@@ -16,6 +16,7 @@ def generate_launch_description():
     # launch configurations
     use_rviz = LaunchConfiguration('use_rviz')
     use_drive_node = LaunchConfiguration('use_drive_node')
+    use_sim_stack = LaunchConfiguration('use_sim_stack')
     use_sim_time = LaunchConfiguration('use_sim_time')
     world = LaunchConfiguration('world')
     gz_flags = LaunchConfiguration('gz_flags')
@@ -137,6 +138,52 @@ def generate_launch_description():
         condition=IfCondition(use_drive_node)
     )
 
+    # optional simulated autonomy sensor/state stack (sensor bridge -> rover_ekf -> NAVnode)
+    sim_sensor_bridge = Node(
+        package='rover_description',
+        executable='sim_sensor_bridge.py',
+        name='sim_sensor_bridge',
+        output='screen',
+        parameters=[{
+            'use_sim_time': use_sim_time,
+            'wheel_radius': 0.15,
+            'wheel_separation': 0.60,
+            'datum_latitude': 51.46,
+            'datum_longitude': -112.70,
+        }],
+        condition=IfCondition(use_sim_stack)
+    )
+
+    ekf_sim_node = Node(
+        package='rover_ekf',
+        executable='ekf_node',
+        name='rover_ekf_node',
+        output='screen',
+        parameters=[{
+            'use_sim_time': use_sim_time,
+            'wheel_radius': 0.15,
+            'imu_yaw_offset_deg': 0.0,
+            'datum_latitude': 51.46,
+            'datum_longitude': -112.70,
+            # Gazebo DiffDrive publishes odom -> base_footprint -> base_link; disable EKF TF broadcast in sim
+            'publish_tf': False,
+        }],
+        condition=IfCondition(use_sim_stack)
+    )
+
+    nav_sim_node = Node(
+        package='navigation_system',
+        executable='NAVnode',
+        name='NAVnode',
+        output='screen',
+        parameters=[{
+            'use_sim_time': use_sim_time,
+            'use_gps_fix_topic': True,
+            'gps_fix_topic': '/gps/fix',
+        }],
+        condition=IfCondition(use_sim_stack)
+    )
+
     return LaunchDescription([
         DeclareLaunchArgument(
             'use_sim_time',
@@ -152,6 +199,11 @@ def generate_launch_description():
             'use_drive_node',
             default_value='true',
             description='Start drive_node and simulation bridge to control the rover'
+        ),
+        DeclareLaunchArgument(
+            'use_sim_stack',
+            default_value='false',
+            description='Start sim_sensor_bridge, rover_ekf (publish_tf:=false), and NAVnode (use_gps_fix_topic:=true)'
         ),
         DeclareLaunchArgument(
             'gz_flags',
@@ -171,5 +223,8 @@ def generate_launch_description():
         depth_info_bridge,
         rviz_node,
         drive_node,
-        sim_drive_bridge
+        sim_drive_bridge,
+        sim_sensor_bridge,
+        ekf_sim_node,
+        nav_sim_node,
     ])

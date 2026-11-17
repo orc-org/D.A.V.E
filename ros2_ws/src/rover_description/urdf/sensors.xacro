@@ -12,7 +12,8 @@
   The LiDAR is modelled on the Unitree L2 (360 x 96 degrees, 30 m, about 64k points/s); the camera
   is a generic 640x480 depth camera, because the real camera is not chosen yet. Change the numbers
   in config/physical_params.yaml (section "sensors"), not here. All of this is a model of the sensors
-  only: no noise model has been calibrated against real hardware.
+  only: the LiDAR range noise follows the L2 datasheet, the IMU noise and bias values are assumed
+  consumer-MEMS figures, and nothing has been calibrated against real hardware.
 -->
 <robot xmlns:xacro="http://www.ros.org/wiki/xacro">
 
@@ -102,12 +103,45 @@
     </sensor>
   </gazebo>
 
+  <!-- one Gaussian noise block (white noise + constant bias + slow dynamic bias), per IMU axis -->
+  <xacro:macro name="imu_noise" params="std bias_mean bias_std dyn_std">
+    <noise type="gaussian">
+      <mean>0.0</mean>
+      <stddev>${std}</stddev>
+      <bias_mean>${bias_mean}</bias_mean>
+      <bias_stddev>${bias_std}</bias_stddev>
+      <dynamic_bias_stddev>${dyn_std}</dynamic_bias_stddev>
+      <dynamic_bias_correlation_time>${s['imu_dyn_bias_corr_time']}</dynamic_bias_correlation_time>
+    </noise>
+  </xacro:macro>
+  <xacro:macro name="imu_axes_gyro">
+    <xacro:imu_noise std="${s['imu_gyro_noise_std']}" bias_mean="${s['imu_gyro_bias_mean']}"
+                     bias_std="${s['imu_gyro_bias_std']}" dyn_std="${s['imu_gyro_dyn_bias_std']}"/>
+  </xacro:macro>
+  <xacro:macro name="imu_axes_accel">
+    <xacro:imu_noise std="${s['imu_accel_noise_std']}" bias_mean="${s['imu_accel_bias_mean']}"
+                     bias_std="${s['imu_accel_bias_std']}" dyn_std="${s['imu_accel_dyn_bias_std']}"/>
+  </xacro:macro>
+
   <gazebo reference="lidar_imu_link">
     <sensor name="lidar_imu" type="imu">
       <topic>lidar/imu</topic>
       <ignition_frame_id>lidar_imu_link</ignition_frame_id>
       <update_rate>${s['imu_rate_hz']}</update_rate>
       <always_on>true</always_on>
+      <!-- noise values: config/physical_params.yaml (imu_*); assumed, not measured -->
+      <imu>
+        <angular_velocity>
+          <x><xacro:imu_axes_gyro/></x>
+          <y><xacro:imu_axes_gyro/></y>
+          <z><xacro:imu_axes_gyro/></z>
+        </angular_velocity>
+        <linear_acceleration>
+          <x><xacro:imu_axes_accel/></x>
+          <y><xacro:imu_axes_accel/></y>
+          <z><xacro:imu_axes_accel/></z>
+        </linear_acceleration>
+      </imu>
     </sensor>
   </gazebo>
 
