@@ -3,10 +3,11 @@ import xacro
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
-from launch.substitutions import LaunchConfiguration
+from launch.substitutions import LaunchConfiguration, PythonExpression
 from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch_ros.actions import Node
+from launch_ros.parameter_descriptions import ParameterValue
 
 
 def generate_launch_description():
@@ -128,14 +129,19 @@ def generate_launch_description():
         condition=IfCondition(use_drive_node)
     )
 
-    # simulation drive bridge (bridges /motor/* to /cmd_vel_sim)
+    # simulation drive bridge (reads /motor/* when drive_node runs, or /cmd_vel directly if use_drive_node:=false)
     sim_drive_bridge = Node(
         package='rover_description',
         executable='sim_drive_bridge.py',
         name='sim_drive_bridge',
         output='screen',
-        parameters=[{'use_sim_time': use_sim_time}],
-        condition=IfCondition(use_drive_node)
+        parameters=[{
+            'use_sim_time': use_sim_time,
+            'subscribe_cmd_vel': ParameterValue(
+                PythonExpression(["'false' if '", use_drive_node, "'.lower() == 'true' else 'true'"]),
+                value_type=bool,
+            ),
+        }],
     )
 
     # optional simulated autonomy sensor/state stack (sensor bridge -> rover_ekf -> NAVnode)

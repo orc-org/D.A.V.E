@@ -251,8 +251,8 @@ class MotionCoordinatorNode(Node):
             'right_finger_joint',
             'gripper_motor_shaft_joint'
         ]
-        # prismatic finger limit mapping: moves inward (negative direction)
-        finger_val = -self.gripper_pos * 0.2
+        # prismatic finger joint limits in rover_arm.xacro are [-0.02, 0.04] m (0=open +0.04, 1=closed -0.02)
+        finger_val = 0.04 - self.gripper_pos * 0.06
         js.position = [
             float(self.wrist.angle_y),
             float(self.fl_wheel_angle),

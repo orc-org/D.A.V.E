@@ -18,9 +18,13 @@ pkill -f "rviz2" 2>/dev/null
 pkill -f "rosbridge_websocket" 2>/dev/null
 pkill -f "python.*http.server" 2>/dev/null
 pkill -f "sim_drive_bridge" 2>/dev/null
+pkill -f "sim_sensor_bridge" 2>/dev/null
 pkill -f "drive_node" 2>/dev/null
 pkill -f "motion_coordinator" 2>/dev/null
 pkill -f "vesc_can_driver_node" 2>/dev/null
+pkill -f "ekf_node" 2>/dev/null
+pkill -f "NAVnode" 2>/dev/null
+pkill -f "rosapi" 2>/dev/null
 sleep 1
 
 # Under WSL2 the GPU OpenGL driver crashes Gazebo's ogre2 renderer (needed by the simulated
@@ -96,10 +100,14 @@ cleanup() {
     pkill -f "robot_state_publisher" 2>/dev/null
     pkill -f "rviz2" 2>/dev/null
     pkill -f "sim_drive_bridge" 2>/dev/null
+    pkill -f "sim_sensor_bridge" 2>/dev/null
     pkill -f "drive_node" 2>/dev/null
     pkill -f "motion_coordinator" 2>/dev/null
     pkill -f "vesc_can_driver_node" 2>/dev/null
+    pkill -f "ekf_node" 2>/dev/null
+    pkill -f "NAVnode" 2>/dev/null
     pkill -f "rosbridge_websocket" 2>/dev/null
+    pkill -f "rosapi" 2>/dev/null
     pkill -f "python3.*dashboard_helper" 2>/dev/null
     exit 0
 }

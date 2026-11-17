@@ -43,7 +43,7 @@ class LightController(Node):
 
     def destroy_node(self):
         GPIO.output(GPIO_LIGHT_PIN, GPIO.LOW)
-        GPIO.cleanup()
+        GPIO.cleanup([GPIO_LIGHT_PIN])
         super().destroy_node()
 
 

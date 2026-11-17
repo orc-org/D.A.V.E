@@ -1471,7 +1471,7 @@ void NAVnode::addEarthCentredObstacle(const std::shared_ptr<AddEarthCentredObsta
 }
 
 void NAVnode::removeLocal(const std::shared_ptr<RemoveLocal::Request> request, std::shared_ptr<RemoveLocal::Response> response){
-    if(routes[routeToFollow].removePoint(request->x, request-> y))
+    if(routes[routeToEdit].removePoint(request->x, request-> y))
         response->output = "Waypoint removed successfully";
     else if(removeLocalObstacle_helper(request->x, request->y))
         response->output = "Obstacle removed successfully";
@@ -1494,7 +1494,7 @@ void NAVnode::removeLocalObstacle(const std::shared_ptr<RemoveLocal::Request> re
 }
 
 void NAVnode::removeGeodetic(const std::shared_ptr<RemoveGeodetic::Request> request, std::shared_ptr<RemoveGeodetic::Response> response){
-    if(routes[routeToFollow].removeGeodeticPoint(request->latitude, request-> longitude))
+    if(routes[routeToEdit].removeGeodeticPoint(request->latitude, request-> longitude))
         response->output = "Waypoint removed successfully";
     else if(removeGeodeticObstacle_helper(request->latitude, request-> longitude))
         response->output = "Obstacle removed successfully";
@@ -1517,7 +1517,7 @@ void NAVnode::removeGeodeticObstacle(const std::shared_ptr<RemoveGeodetic::Reque
 }
 
 void NAVnode::removeEarthCentred(const std::shared_ptr<RemoveEarthCentred::Request> request, std::shared_ptr<RemoveEarthCentred::Response> response){
-    if(routes[routeToFollow].removeEarthCentredPoint(request->x, request->y, request->z))
+    if(routes[routeToEdit].removeEarthCentredPoint(request->x, request->y, request->z))
         response->output = "Waypoint removed successfully";
     else if(removeEarthCentredObstacle_helper(request->x, request->y, request->z))
         response->output = "Obstacle removed successfully";

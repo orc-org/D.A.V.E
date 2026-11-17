@@ -34,6 +34,7 @@ let imuFilteredEulerSub = null;
 let imuRawSub = null;
 let imuFilteredSub = null;
 let imuOdomSub = null;
+let ekfOdomSub = null;
 let imuStrSub = null;
 
 let imuEulerData = { roll: 0.0, pitch: 0.0, yaw: 0.0, lastUpdate: null };
@@ -43,6 +44,10 @@ let imuMotionData = {
     gyro: { x: 0.0, y: 0.0, z: 0.0 }
 };
 let imuOdomData = {
+    pos: { x: 0.0, y: 0.0, z: 0.0 },
+    vel: { x: 0.0, y: 0.0, z: 0.0 }
+};
+let ekfOdomData = {
     pos: { x: 0.0, y: 0.0, z: 0.0 },
     vel: { x: 0.0, y: 0.0, z: 0.0 }
 };
@@ -364,8 +369,9 @@ function setupROSInterfaces() {
     tfSub.subscribe((msg) => {
         for (let i = 0; i < msg.transforms.length; i++) {
             let t = msg.transforms[i];
-            // Accept TF transforms from authoritative odom or map frames to avoid collisions
-            if (t.child_frame_id === 'base_link' && (t.header.frame_id === 'odom' || t.header.frame_id === 'map')) {
+            // Accept TF transforms from authoritative odom or map frames (real base_link or Gazebo base_footprint)
+            if ((t.child_frame_id === 'base_link' || t.child_frame_id === 'base_footprint') &&
+                (t.header.frame_id === 'odom' || t.header.frame_id === 'map')) {
                 let x = t.transform.translation.x;
                 let y = t.transform.translation.y;
                 if (valBasePos) valBasePos.innerText = `X: ${x.toFixed(2)}, Y: ${y.toFixed(2)}`;
@@ -2910,28 +2916,28 @@ function setupIMUROSInterfaces() {
     });
     ekfOdomSub.subscribe((msg) => {
         if (msg && msg.pose && msg.pose.pose && msg.twist && msg.twist.twist) {
-            imuOdomData.pos = {
+            ekfOdomData.pos = {
                 x: msg.pose.pose.position.x || 0.0,
                 y: msg.pose.pose.position.y || 0.0,
                 z: msg.pose.pose.position.z || 0.0
             };
-            imuOdomData.vel = {
+            ekfOdomData.vel = {
                 x: msg.twist.twist.linear.x || 0.0,
                 y: msg.twist.twist.linear.y || 0.0,
                 z: msg.twist.twist.linear.z || 0.0
             };
             const ekfValEl = document.getElementById('val-ekf-telemetry-fusion');
             if (ekfValEl) {
-                const x = imuOdomData.pos.x;
-                const y = imuOdomData.pos.y;
-                const vx = imuOdomData.vel.x;
+                const x = ekfOdomData.pos.x;
+                const y = ekfOdomData.pos.y;
+                const vx = ekfOdomData.vel.x;
                 ekfValEl.innerText = `X: ${x.toFixed(2)}m | Y: ${y.toFixed(2)}m | Speed: ${vx.toFixed(2)} m/s`;
             }
             updateIMUUI();
         }
     });
 
-    // 5. /imu/telemetry_str (Formatted Multi-line Telemetry String)
+    // 6. /imu/telemetry_str (Formatted Multi-line Telemetry String)
     imuStrSub = new ROSLIB.Topic({
         ros: ros,
         name: '/imu/telemetry_str',
@@ -2953,6 +2959,7 @@ function cleanupIMUROSInterfaces() {
     if (imuRawSub) { imuRawSub.unsubscribe(); imuRawSub = null; }
     if (imuFilteredSub) { imuFilteredSub.unsubscribe(); imuFilteredSub = null; }
     if (imuOdomSub) { imuOdomSub.unsubscribe(); imuOdomSub = null; }
+    if (ekfOdomSub) { ekfOdomSub.unsubscribe(); ekfOdomSub = null; }
     if (imuStrSub) { imuStrSub.unsubscribe(); imuStrSub = null; }
 }
 

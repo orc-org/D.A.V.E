@@ -126,6 +126,9 @@ private:
 
         const auto wheels = drive_package::mixJoystickCommand(
             lt_raw, rt_raw, steering, sensitivity_, joy_deadzone_, right_trigger_forward_);
+        if (std::abs(wheels.left) > 1e-4f || std::abs(wheels.right) > 1e-4f) {
+            last_active_joy_time_ = steady_.now();
+        }
         publishWheelPair(wheels);
 
         RCLCPP_INFO_THROTTLE(
@@ -138,6 +141,11 @@ private:
     void cmdVelCallback(const geometry_msgs::msg::Twist::SharedPtr msg)
     {
         if (current_mode_ != "drive") {
+            return;
+        }
+        // Let an active physical /joy controller win over idle zero /cmd_vel heartbeats (e.g. from open dashboard tab)
+        const bool is_zero_twist = std::abs(msg->linear.x) < 1e-3 && std::abs(msg->angular.z) < 1e-3;
+        if (is_zero_twist && (steady_.now() - last_active_joy_time_).seconds() < 0.4) {
             return;
         }
 
@@ -158,6 +166,8 @@ private:
     float joy_deadzone_ = 0.05f;
     std::string current_mode_ = "drive";
     float sensitivity_ = 1.0f;
+    rclcpp::Clock steady_{RCL_STEADY_TIME};
+    rclcpp::Time last_active_joy_time_{0, 0, RCL_STEADY_TIME};
 
     rclcpp::Subscription<sensor_msgs::msg::Joy>::SharedPtr joy_sub_;
     rclcpp::Subscription<geometry_msgs::msg::Twist>::SharedPtr cmd_vel_sub_;

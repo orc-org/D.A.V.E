@@ -35,6 +35,12 @@ class input_viewer_class(Node):
         self.tf_broadcaster = StaticTransformBroadcaster(self)
         self.publish_static_tf()
 
+    def _axis(self, msg, index, default=0.0):
+        if index < len(msg.axes):
+            val = float(msg.axes[index])
+            return val if -1e6 < val < 1e6 else default
+        return default
+
     def joy_callback(self, msg):
         markers = MarkerArray()
         mid = 0
@@ -50,7 +56,7 @@ class input_viewer_class(Node):
             self.arrow_marker(
                 #change the numbers for x,y origin
                 mid, -1.91, -1.2,
-                msg.axes[0], msg.axes[1],
+                self._axis(msg, 0), self._axis(msg, 1),
                 0.0, 0.0, 1.0
             )           
         )
@@ -62,7 +68,7 @@ class input_viewer_class(Node):
         markers.markers.append(
             self.arrow_marker(
                 mid, 1.91, -1.2,
-                msg.axes[2], msg.axes[3],
+                self._axis(msg, 2), self._axis(msg, 3),
                 1.0, 0.0, 0.0
             )
         )
@@ -72,8 +78,8 @@ class input_viewer_class(Node):
         # TRIGGERS (axes 4,5)
 
         #Normalizes the values to 0->1        
-        l2 = (1.0 - msg.axes[4]) / 2.0
-        r2 = (1.0 - msg.axes[5]) / 2.0
+        l2 = (1.0 - self._axis(msg, 4, 1.0)) / 2.0
+        r2 = (1.0 - self._axis(msg, 5, 1.0)) / 2.0
 
 # Left Trigger Background
         markers.markers.append(self.trigger_background_marker(mid, -3.5, 1.9))

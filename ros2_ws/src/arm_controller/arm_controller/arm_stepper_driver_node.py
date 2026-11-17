@@ -407,7 +407,14 @@ class ArmStepperDriverNode(Node):
                 self.arm_hw.shutdown_pins_low()
                 self.gripper_hw.shutdown_pins_low()
                 time.sleep(0.01)  # Short 10ms delay for electrical levels to settle
-                GPIO.cleanup()
+                # Clean up only this node's stepper pins so sibling nodes' GPIO outputs stay active
+                own_pins = [
+                    p for p in (
+                        self.arm_step_pin, self.arm_dir_pin, self.arm_enable_pin,
+                        self.gripper_step_pin, self.gripper_dir_pin, self.gripper_enable_pin,
+                    ) if p is not None
+                ]
+                GPIO.cleanup(own_pins)
             except Exception:
                 pass
         super().destroy_node()

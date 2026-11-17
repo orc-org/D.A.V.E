@@ -96,6 +96,7 @@ cleanup() {
     # Force clean up any leftover subprocesses
     pkill -f dashboard_helper 2>/dev/null
     pkill -f rosbridge_websocket 2>/dev/null
+    pkill -f rosapi 2>/dev/null
     echo "Clean exit."
     exit 0
 }

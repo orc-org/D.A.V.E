@@ -32,11 +32,16 @@ public:
         std::string port = this->get_parameter("port").as_string();
         int baud = this->get_parameter("baud").as_int();
         
-        xlr = new SerialPort(SerialPort::stringToCharacterArray(port), baud);
+        xlr = new SerialPort(port, baud);
 
         converseServer = this->create_service<serial_interfaces::srv::Converse>("Converse", std::bind(&XLRnode::converseWithTerminal, this, _1, _2));
         receiveServer = this->create_service<serial_interfaces::srv::Receive>("Receive", std::bind(&XLRnode::receiveMessage, this, _1, _2));
         transmitServer = this->create_service<serial_interfaces::srv::Transmit>("Transmit", std::bind(&XLRnode::transmitMessage, this, _1, _2));
+    }
+
+    ~XLRnode() {
+        delete xlr;
+        xlr = nullptr;
     }
 
     void transmitMessage(const std::shared_ptr<serial_interfaces::srv::Transmit::Request> request, std::shared_ptr<serial_interfaces::srv::Transmit::Response> response){
