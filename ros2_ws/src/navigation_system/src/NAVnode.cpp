@@ -1,40 +1,11 @@
 #include "NAVnode.hpp"
+#include "nav_nmea.hpp"
 #include <algorithm>
 
 using std::placeholders::_1;
 using std::placeholders::_2;
-
-// NMEA 0183 encodes angles as ddmm.mmmm (degrees and decimal minutes); convert to decimal degrees
-static double nmeaToDegrees(double ddmm){
-    double degrees = std::floor(ddmm / 100.0);
-    return degrees + (ddmm - degrees * 100.0) / 60.0;
-}
-
-// Fields (split on commas) of the most recent COMPLETE sentence of the given type in a serial buffer,
-// e.g. nmeaFields(buffer, "RMC") for "$GNRMC,...*hh". Returns an empty vector when there is none.
-// A sentence is complete when it is followed by its checksum marker or a line end.
-static std::vector<std::string> nmeaFields(const std::string& buffer, const char* type){
-    std::vector<std::string> fields;
-    size_t pos = buffer.rfind(type);
-    while (pos != std::string::npos) {
-        size_t begin = buffer.rfind('$', pos);
-        size_t end = buffer.find_first_of("*\r\n", pos);
-        if (begin != std::string::npos && end != std::string::npos && pos - begin == 3) {
-            std::string sentence = buffer.substr(begin, end - begin);
-            size_t from = 0;
-            while (true) {
-                size_t comma = sentence.find(',', from);
-                fields.push_back(sentence.substr(from, comma == std::string::npos ? std::string::npos : comma - from));
-                if (comma == std::string::npos) break;
-                from = comma + 1;
-            }
-            return fields;
-        }
-        if (pos == 0) break;
-        pos = buffer.rfind(type, pos - 1);
-    }
-    return fields;
-}
+using nav_nmea::nmeaToDegrees;
+using nav_nmea::nmeaFields;
 
 class DummyGPS{
 public:
@@ -491,11 +462,20 @@ void NAVnode::generateDetour(double pointOfInterest_X, double pointOfInterest_Y,
     delete[] unitVector;
 }
 
-Waypoint* NAVnode::findAlternateRoute(int first, int second){
+Waypoint* NAVnode::findAlternateRoute(int first, int second, int depth){
+    if (depth > 16 || depth > obstacleCount) {
+        return nullptr;
+    }
+    if (first < 0 || second < 0 || first >= obstacleCount || second >= obstacleCount) {
+        return nullptr;
+    }
     // define unit vector going from the centre of the original obstacle to the next one
     double dx = obstacles[second]->getX() - obstacles[first]->getX();
     double dy = obstacles[second]->getY() - obstacles[first]->getY();
     double length = sqrt(dx * dx + dy * dy);
+    if (length < 1e-9) {
+        return nullptr;
+    }
     double* unitVector = new double[2]{dx / length, dy / length};
 
     Waypoint* possibleWaypoint = new Waypoint(obstacles[second]->getX() + (obstacles[second]->getRadius() + 1) * unitVector[0], obstacles[second]->getY() + (obstacles[second]->getRadius() + 1) * unitVector[1]);
@@ -522,11 +502,11 @@ Waypoint* NAVnode::findAlternateRoute(int first, int second){
             int indexOfNextObstacle = findWaypointCollision(possibleWaypoint);
             delete possibleWaypoint;
 
-            if (indexOfNextObstacle < 0 || indexOfNextObstacle >= obstacleCount) {
+            if (indexOfNextObstacle < 0 || indexOfNextObstacle >= obstacleCount || indexOfNextObstacle == second) {
                 return nullptr;
             }
 
-            return findAlternateRoute(second, indexOfNextObstacle);
+            return findAlternateRoute(second, indexOfNextObstacle, depth + 1);
         }
     }
 }
@@ -637,48 +617,42 @@ std::string NAVnode::getCircumnavigationStyleName(){
     return name;
 }
 
-bool NAVnode::removeLocalObstacle_helper(int x, int y){
+static bool eraseObstacleAt(Obstacle** obstacles, int& obstacleCount, int index) {
+    if (index < 0 || index >= obstacleCount) return false;
+    if (index != obstacleCount - 1) {
+        Obstacle* temp = obstacles[index];
+        obstacles[index] = obstacles[obstacleCount - 1];
+        obstacles[obstacleCount - 1] = temp;
+    }
+    delete obstacles[--obstacleCount];
+    obstacles[obstacleCount] = nullptr;
+    return true;
+}
+
+bool NAVnode::removeLocalObstacle_helper(double x, double y){
     for(int i = 0; i < obstacleCount; i++){
-        if ((obstacles[i]->getX() == x) && (obstacles[i]->getY() == y)){
-            // swap with last valid element (index obstacleCount-1) if not already last
-            if (i != obstacleCount - 1){
-                Obstacle* temp = obstacles[i];
-                obstacles[i] = obstacles[obstacleCount - 1];
-                obstacles[obstacleCount - 1] = temp;
-            }
-            // delete last element and decrement count
-            delete obstacles[--obstacleCount];
-            return true;
+        if (std::abs(obstacles[i]->getX() - x) < 1e-6 && std::abs(obstacles[i]->getY() - y) < 1e-6){
+            return eraseObstacleAt(obstacles, obstacleCount, i);
         }
     }
     return false;
 }
 
-bool NAVnode::removeGeodeticObstacle_helper(int latitude, int longitude){
+bool NAVnode::removeGeodeticObstacle_helper(double latitude, double longitude){
     for(int i = 0; i < obstacleCount; i++){
-        if ((obstacles[i]->getLatitude() == latitude) && (obstacles[i]->getLongitude() == longitude)){
-            if (i != obstacleCount - 1){
-                Obstacle* temp = obstacles[i];
-                obstacles[i] = obstacles[obstacleCount - 1];
-                obstacles[obstacleCount - 1] = temp;
-            }
-            delete obstacles[--obstacleCount];
-            return true;
+        if (std::abs(obstacles[i]->getLatitude() - latitude) < 1e-6 && std::abs(obstacles[i]->getLongitude() - longitude) < 1e-6){
+            return eraseObstacleAt(obstacles, obstacleCount, i);
         }
     }
     return false;
 }
 
-bool NAVnode::removeEarthCentredObstacle_helper(int x, int y, int z){
+bool NAVnode::removeEarthCentredObstacle_helper(double x, double y, double z){
     for(int i = 0; i < obstacleCount; i++){
-        if ((obstacles[i]->getECEF_x() == x) && (obstacles[i]->getECEF_y() == y) && (obstacles[i]->getECEF_z() == z)){
-            if (i != obstacleCount - 1){
-                Obstacle* temp = obstacles[i];
-                obstacles[i] = obstacles[obstacleCount - 1];
-                obstacles[obstacleCount - 1] = temp;
-            }
-            delete obstacles[--obstacleCount];
-            return true;
+        if (std::abs(obstacles[i]->getECEF_x() - x) < 1e-6 &&
+            std::abs(obstacles[i]->getECEF_y() - y) < 1e-6 &&
+            std::abs(obstacles[i]->getECEF_z() - z) < 1e-6){
+            return eraseObstacleAt(obstacles, obstacleCount, i);
         }
     }
     return false;
@@ -721,11 +695,18 @@ NAVnode::NAVnode() : Node("NAVnode"), count_(0) {
 
     std::string gnss_port = this->declare_parameter<std::string>("gnss_port", "/dev/ttyUSB0");
     int gnss_baud = this->declare_parameter<int>("gnss_baudrate", 38400);
+    verify_nmea_checksum_ = this->declare_parameter<bool>("verify_nmea_checksum", true);
+    use_gps_fix_topic_ = this->declare_parameter<bool>("use_gps_fix_topic", false);
+    std::string gps_fix_topic = this->declare_parameter<std::string>("gps_fix_topic", "/gps/fix");
 
-    // initialize serial port using the parameter
-    GNSS = new SerialPort(SerialPort::stringToCharacterArray(gnss_port.c_str()), gnss_baud);
-    //GNSS = new DummyGPS();
-    GNSS->begin();
+    GNSS = nullptr;
+    if (use_gps_fix_topic_) {
+        gps_fix_sub_ = this->create_subscription<sensor_msgs::msg::NavSatFix>(
+            gps_fix_topic, 10, std::bind(&NAVnode::gpsFixCallback, this, _1));
+    } else {
+        GNSS = new SerialPort(gnss_port, gnss_baud);
+        GNSS->begin();
+    }
 
     // create topics
     // here, we're using a queue size of 1 because it is more desireable to lose some data
@@ -840,6 +821,23 @@ NAVnode::~NAVnode() {
     }
 
     cout << "number of waypoints visited: " << count << endl;
+
+    delete GNSS;
+    GNSS = nullptr;
+    delete currentPosition;
+    currentPosition = nullptr;
+    for (int i = 0; i < 5; ++i) {
+        delete lastFiveWaypoints[i];
+        lastFiveWaypoints[i] = nullptr;
+    }
+    if (obstacles != nullptr) {
+        for (int i = 0; i < obstacleCount; ++i) {
+            delete obstacles[i];
+            obstacles[i] = nullptr;
+        }
+        delete[] obstacles;
+        obstacles = nullptr;
+    }
 }
 
     // timers
@@ -913,75 +911,114 @@ void NAVnode::mainTimer(){
    
 }
 
+void NAVnode::gpsFixCallback(const sensor_msgs::msg::NavSatFix::SharedPtr msg){
+    if (msg->status.status < 0 || !std::isfinite(msg->latitude) || !std::isfinite(msg->longitude)) {
+        return;
+    }
+    if (std::abs(msg->latitude) < 1e-4 && std::abs(msg->longitude) < 1e-4) {
+        return;
+    }
+    const double alt = std::isfinite(msg->altitude) ? msg->altitude : 0.0;
+    Waypoint* updated = new Waypoint(msg->longitude, msg->latitude, alt, true);
+    const int64_t stamp_ns = static_cast<int64_t>(msg->header.stamp.sec) * 1000000000LL
+                           + static_cast<int64_t>(msg->header.stamp.nanosec);
+    if (have_prev_fix_ && Waypoint::isHomeSet() && stamp_ns > prev_fix_ns_) {
+        const double dt_s = static_cast<double>(stamp_ns - prev_fix_ns_) * 1e-9;
+        const double dx = updated->getX() - prev_fix_x_;
+        const double dy = updated->getY() - prev_fix_y_;
+        const double dist = std::hypot(dx, dy);
+        if (dt_s > 0.05) {
+            lastSpeed = (dist / dt_s) * 3.6;  // km/h
+            if (dist > 0.05) {
+                double h = std::atan2(dx, dy);
+                if (h < 0.0) h += 2.0 * Waypoint::pi;
+                lastHeading = h;
+            }
+        }
+    }
+    if (Waypoint::isHomeSet()) {
+        prev_fix_x_ = updated->getX();
+        prev_fix_y_ = updated->getY();
+        prev_fix_ns_ = stamp_ns;
+        have_prev_fix_ = true;
+    }
+    hasFix = true;
+    delete currentPosition;
+    currentPosition = updated;
+}
+
 void NAVnode::updatePositonData(){
-    // GNSS->read() returns only the bytes that arrived since the last tick (up to 256), so a sentence is
-    // often split across two ticks. Keep the bytes and parse the accumulated buffer instead.
-    gnssBuffer += GNSS->read();
-    if (gnssBuffer.size() > 4096) gnssBuffer.erase(0, gnssBuffer.size() - 4096);
-    string message = gnssBuffer;
-    size_t lastLineEnd = gnssBuffer.find_last_of('\n');
-    if (lastLineEnd != std::string::npos) gnssBuffer.erase(0, lastLineEnd + 1);   // keep only the unfinished sentence
-
-    auto gnssInformation = navigation_interfaces::msg::DisplayInfo();
-
-    double latitude = 0.0;
-    double longitude = 0.0;
-    double altitude = 0.0;
-
-    // speed and heading used to reset to 0 every tick, so a tick without an RMC sentence published 0 km/h
     double heading = lastHeading;
     double speed = lastSpeed;
 
-    // Split the most recent complete RMC / GGA / VTG sentences on commas.
-    // (The earlier code searched for "A," and "N," and then stepped ONE character, which landed on the
-    //  comma, so the number conversion threw and every buffer containing an RMC sentence was discarded.)
-    bool havePosition = false;
-    try {
-        std::vector<std::string> rmc = nmeaFields(message, "RMC");
-        std::vector<std::string> gga = nmeaFields(message, "GGA");
-        std::vector<std::string> vtg = nmeaFields(message, "VTG");
-
-        // RMC: 1 time, 2 status, 3 latitude, 4 N/S, 5 longitude, 6 E/W, 7 speed (knots), 8 true track (deg), 9 date
-        if (rmc.size() > 9 && rmc[2] == "A" && !rmc[3].empty() && !rmc[5].empty()) {
-            latitude = nmeaToDegrees(stod(rmc[3]));
-            if (rmc[4] == "S") latitude = -latitude;
-            longitude = nmeaToDegrees(stod(rmc[5]));
-            if (rmc[6] == "W") longitude = -longitude;
-            havePosition = true;
-            if (!rmc[7].empty()) speed = stod(rmc[7]) * 1.852;                     // knots to km/h
-            if (!rmc[8].empty()) heading = stod(rmc[8]) * Waypoint::pi / 180.0;    // course over ground
-            if (date.empty() && rmc[9].size() >= 6)                                 // ddmmyy, used in the log file name
-                date = rmc[9].substr(0, 2) + "-" + rmc[9].substr(2, 2) + "-" + rmc[9].substr(4, 2);
+    if (GNSS != nullptr) {
+        // Drain up to 16 buffered chunks so a burst of NMEA sentences settles within one tick.
+        for (int reads = 0; reads < 16; ++reads) {
+            std::string chunk = GNSS->read();
+            if (chunk.empty()) break;
+            gnssBuffer += chunk;
         }
+        if (gnssBuffer.size() > 4096) gnssBuffer.erase(0, gnssBuffer.size() - 4096);
+        string message = gnssBuffer;
+        size_t lastLineEnd = gnssBuffer.find_last_of('\n');
+        if (lastLineEnd != std::string::npos) gnssBuffer.erase(0, lastLineEnd + 1);   // keep only the unfinished sentence
 
-        // GGA: 2 latitude, 3 N/S, 4 longitude, 5 E/W, 6 fix quality (0 = no fix), 9 altitude (m)
-        if (gga.size() > 9 && !gga[6].empty() && gga[6] != "0" && !gga[2].empty() && !gga[4].empty()) {
-            latitude = nmeaToDegrees(stod(gga[2]));
-            if (gga[3] == "S") latitude = -latitude;
-            longitude = nmeaToDegrees(stod(gga[4]));
-            if (gga[5] == "W") longitude = -longitude;
-            if (!gga[9].empty()) altitude = stod(gga[9]);
-            havePosition = true;
+        double latitude = 0.0;
+        double longitude = 0.0;
+        double altitude = 0.0;
+
+        bool havePosition = false;
+        try {
+            std::vector<std::string> rmc = nmeaFields(message, "RMC", verify_nmea_checksum_);
+            std::vector<std::string> gga = nmeaFields(message, "GGA", verify_nmea_checksum_);
+            std::vector<std::string> vtg = nmeaFields(message, "VTG", verify_nmea_checksum_);
+
+            // RMC: 1 time, 2 status, 3 latitude, 4 N/S, 5 longitude, 6 E/W, 7 speed (knots), 8 true track (deg), 9 date
+            if (rmc.size() > 9 && rmc[2] == "A" && !rmc[3].empty() && !rmc[5].empty()) {
+                latitude = nmeaToDegrees(stod(rmc[3]));
+                if (rmc[4] == "S") latitude = -latitude;
+                longitude = nmeaToDegrees(stod(rmc[5]));
+                if (rmc[6] == "W") longitude = -longitude;
+                havePosition = true;
+                if (!rmc[7].empty()) speed = stod(rmc[7]) * 1.852;                     // knots to km/h
+                if (!rmc[8].empty()) heading = stod(rmc[8]) * Waypoint::pi / 180.0;    // course over ground
+                if (date.empty() && rmc[9].size() >= 6)                                 // ddmmyy, used in the log file name
+                    date = rmc[9].substr(0, 2) + "-" + rmc[9].substr(2, 2) + "-" + rmc[9].substr(4, 2);
+            }
+
+            // GGA: 2 latitude, 3 N/S, 4 longitude, 5 E/W, 6 fix quality, 9 altitude (m)
+            if (gga.size() > 9 && !gga[6].empty() && nav_nmea::isAcceptableGgaQuality(std::stoi(gga[6])) &&
+                !gga[2].empty() && !gga[4].empty()) {
+                latitude = nmeaToDegrees(stod(gga[2]));
+                if (gga[3] == "S") latitude = -latitude;
+                longitude = nmeaToDegrees(stod(gga[4]));
+                if (gga[5] == "W") longitude = -longitude;
+                if (!gga[9].empty()) altitude = stod(gga[9]);
+                havePosition = true;
+            }
+
+            // VTG: 1 true track (deg), 7 speed (km/h); only used when RMC did not give them
+            if (rmc.empty() && vtg.size() > 7) {
+                if (!vtg[1].empty()) heading = stod(vtg[1]) * Waypoint::pi / 180.0;
+                if (!vtg[7].empty()) speed = stod(vtg[7]);
+            }
         }
+        catch (...) { return; }   // a malformed number: skip this cycle rather than publish a wrong position
+        lastSpeed = speed;
+        lastHeading = heading;
 
-        // VTG: 1 true track (deg), 7 speed (km/h); only used when RMC did not give them
-        if (rmc.empty() && vtg.size() > 7) {
-            if (!vtg[1].empty()) heading = stod(vtg[1]) * Waypoint::pi / 180.0;
-            if (!vtg[7].empty()) speed = stod(vtg[7]);
+        if (currentPosition != nullptr && havePosition && latitude != 0.0 && longitude != 0.0) {
+            hasFix = true;
+            delete currentPosition;
+            currentPosition = new Waypoint(longitude, latitude, altitude, true); // constructor order is (longitude, latitude, altitude)
+        } else if (currentPosition == nullptr) {
+            currentPosition = new Waypoint(0.0, 0.0);
         }
-    }
-    catch (...) { return; }   // a malformed number: skip this cycle rather than publish a wrong position
-    lastSpeed = speed;
-    lastHeading = heading;
-
-
-    if (currentPosition != nullptr && havePosition && latitude != 0.0 && longitude != 0.0) {
-        hasFix = true;
-        delete currentPosition;
-        currentPosition = new Waypoint(longitude, latitude, altitude, true); // constructor order is (longitude, latitude, altitude)
     } else if (currentPosition == nullptr) {
         currentPosition = new Waypoint(0.0, 0.0);
     }
+
+    auto gnssInformation = navigation_interfaces::msg::DisplayInfo();
 
     gnssInformation.heading = heading;
     gnssInformation.speed = speed;
@@ -1173,8 +1210,11 @@ void NAVnode::toggleCircumnavigationStyle(const std::shared_ptr<VoidService::Req
 }
 
 void NAVnode::targetNextWaypoint(const std::shared_ptr<VoidService::Request> request, std::shared_ptr<VoidService::Response> response){
+    (void)request;
+    (void)response;
     validateTarget();
     if (nextWaypoint == nullptr) {
+        routeFinished = true;
         return;
     }
 
@@ -1182,11 +1222,15 @@ void NAVnode::targetNextWaypoint(const std::shared_ptr<VoidService::Request> req
         nextWaypoint = nextWaypoint->next;
     else
         nextWaypoint = nextWaypoint->previous;
+    routeFinished = (nextWaypoint == nullptr);
 }
 
 void NAVnode::targetPreviousWaypoint(const std::shared_ptr<VoidService::Request> request, std::shared_ptr<VoidService::Response> response){
+    (void)request;
+    (void)response;
     validateTarget();
     if (nextWaypoint == nullptr) {
+        routeFinished = true;
         return;
     }
 
@@ -1194,6 +1238,7 @@ void NAVnode::targetPreviousWaypoint(const std::shared_ptr<VoidService::Request>
         nextWaypoint = nextWaypoint->previous;
     else 
         nextWaypoint = nextWaypoint->next;
+    routeFinished = (nextWaypoint == nullptr);
 }
 
 void NAVnode::selectRouteToFollow(const std::shared_ptr<SelectRoute::Request> request, std::shared_ptr<SelectRoute::Response> response){
@@ -1222,13 +1267,41 @@ void NAVnode::selectRouteToEdit(const std::shared_ptr<SelectRoute::Request> requ
     response->output = "Route successfully changed";
 }
 
+void NAVnode::rebaseWaypointsToHome(){
+    if (currentPosition != nullptr) {
+        currentPosition->EarthCentred_To_Local();
+    }
+    for (int i = 0; i < 5; ++i) {
+        if (lastFiveWaypoints[i] != nullptr) {
+            lastFiveWaypoints[i]->EarthCentred_To_Local();
+        }
+        for (ListNode* n = routes[i].getHead(); n != nullptr; n = n->next) {
+            if (n->point != nullptr) {
+                n->point->EarthCentred_To_Local();
+            }
+        }
+    }
+    for (ListNode* n = pointsVisited.getHead(); n != nullptr; n = n->next) {
+        if (n->point != nullptr) {
+            n->point->EarthCentred_To_Local();
+        }
+    }
+    for (int i = 0; i < obstacleCount; ++i) {
+        if (obstacles[i] != nullptr) {
+            obstacles[i]->rebaseToHome();
+        }
+    }
+}
+
 void NAVnode::resetHome(const std::shared_ptr<ResetHome::Request> request, std::shared_ptr<ResetHome::Response> response){
     Waypoint* point = new Waypoint(request->longitude, request->latitude, 0, true); // constructor order is (longitude, latitude, altitude)
 
-    if(point->setHome(point, request->password))
+    if(point->setHome(point, request->password)) {
+        rebaseWaypointsToHome();
         response->success = true;
-    else
+    } else {
         response->success = false;
+    }
 
     delete point;
 }
@@ -1487,12 +1560,20 @@ void NAVnode::removeLastObstacle(const std::shared_ptr<RemoveLast::Request> requ
 }
 
 void NAVnode::sendToGNSS(const std::shared_ptr<SendToGNSS::Request> request, std::shared_ptr<SendToGNSS::Response> response){
-    GNSS->write(request->outgoing);
+    (void)response;
+    if (GNSS != nullptr) {
+        GNSS->write(request->outgoing);
+    }
 }
 
 void NAVnode::readFromGNSS(const std::shared_ptr<ReadFromGNSS::Request> request, std::shared_ptr<ReadFromGNSS::Response> response){
-    response->incoming = GNSS->read();
-    cout << response->incoming << '\n';
+    (void)request;
+    if (GNSS != nullptr) {
+        response->incoming = GNSS->read();
+        cout << response->incoming << '\n';
+    } else {
+        response->incoming = "";
+    }
 }
 
 

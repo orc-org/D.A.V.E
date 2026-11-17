@@ -60,6 +60,7 @@
 #include "rclcpp/rclcpp.hpp"
 #include "rclcpp_action/rclcpp_action.hpp"
 #include "rclcpp_components/register_node_macro.hpp"
+#include "sensor_msgs/msg/nav_sat_fix.hpp"
 
 
 
@@ -101,6 +102,12 @@ private:
     double lastSpeed = 0.0;     // km/h, held until the next RMC/VTG sentence
     double lastHeading = 0.0;   // rad, course over ground, held until the next RMC/VTG sentence
     bool hasFix = false;        // true once a valid GNSS position has been parsed
+    bool verify_nmea_checksum_ = true;
+    bool use_gps_fix_topic_ = false;
+    bool have_prev_fix_ = false;
+    double prev_fix_x_ = 0.0;
+    double prev_fix_y_ = 0.0;
+    int64_t prev_fix_ns_ = 0;
     std::shared_ptr<NAVGoalHandle> activeGoal;   // the FollowRoute goal being tracked, if any
     int goalFeedbackTicks = 0;
 
@@ -141,6 +148,7 @@ private:
 
     // Topics
     rclcpp::Publisher<navigation_interfaces::msg::DisplayInfo>::SharedPtr DisplayInfoPublisher;
+    rclcpp::Subscription<sensor_msgs::msg::NavSatFix>::SharedPtr gps_fix_sub_;
 
     // Services
 
@@ -307,7 +315,7 @@ private:
     */
     void generateDetour(double pointOfInterest_X, double pointOfInterest_Y, ListNode* nextNode, Obstacle* obstacle);
 
-    Waypoint* findAlternateRoute(int first, int second);
+    Waypoint* findAlternateRoute(int first, int second, int depth = 0);
 
     /*
         calculatePointOfInterest(ListNode* start, ListNode* end, Obstacle* obstacle)
@@ -340,11 +348,15 @@ private:
 
     std::string getCircumnavigationStyleName();
 
-    bool removeLocalObstacle_helper(int x, int y);
+    bool removeLocalObstacle_helper(double x, double y);
 
-    bool removeGeodeticObstacle_helper(int latitude, int longitude);
+    bool removeGeodeticObstacle_helper(double latitude, double longitude);
 
-    bool removeEarthCentredObstacle_helper(int x, int y, int z);
+    bool removeEarthCentredObstacle_helper(double x, double y, double z);
+
+    void gpsFixCallback(const sensor_msgs::msg::NavSatFix::SharedPtr msg);
+
+    void rebaseWaypointsToHome();
 
     // Constructor
 

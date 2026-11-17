@@ -70,22 +70,34 @@ class GPSBridgeNode(Node):
         # self.info_for_navigation_display = self.create_publisher(DisplayInfo, '/gps/display_info', 10)
 
         self.buffer = ""
+        self.ser = None
+        self.last_connect_attempt = 0.0
+        self.reconnect_period_s = 2.0
 
         self.get_logger().info(f"Opening serial port {self.port} at {self.baud} baud...")
+        self._open_serial()
 
+        # Polling timer (20 Hz / 50ms)
+        self.timer = self.create_timer(0.05, self.read_serial_data)
+
+    def _open_serial(self):
+        self.last_connect_attempt = time.monotonic()
         try:
             # Set timeout=0 for non-blocking reads to avoid blocking the ROS 2 executor thread
             self.ser = serial.Serial(self.port, self.baud, timeout=0)
             self.get_logger().info(f"Successfully connected to GPS device at {self.port}")
         except serial.SerialException as e:
-            self.get_logger().error(f"Failed to open serial port {self.port}: {e}")
+            self.get_logger().error(
+                f"Failed to open serial port {self.port}: {e}; retrying every {self.reconnect_period_s:.0f} s."
+            )
             self.ser = None
 
-        # Polling timer (20 Hz / 50ms)
-        self.timer = self.create_timer(0.05, self.read_serial_data)
-
     def read_serial_data(self):
-        if not rclpy.ok() or self.ser is None or not self.ser.is_open:
+        if not rclpy.ok():
+            return
+        if self.ser is None or not self.ser.is_open:
+            if time.monotonic() - self.last_connect_attempt >= self.reconnect_period_s:
+                self._open_serial()
             return
 
         try:
@@ -119,7 +131,13 @@ class GPSBridgeNode(Node):
 
         except Exception as e:
             if rclpy.ok():
-                self.get_logger().warn(f"Error reading/parsing serial data: {e}")
+                self.get_logger().warn(f"GPS serial read error: {e}. Dropping handle for reconnect.")
+            try:
+                if self.ser is not None:
+                    self.ser.close()
+            except Exception:
+                pass
+            self.ser = None
 
     def parse_gga(self, line: str):
         parts = line.split(',')

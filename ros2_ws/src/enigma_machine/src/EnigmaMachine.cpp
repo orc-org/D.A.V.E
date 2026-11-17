@@ -27,9 +27,7 @@ struct TrieNode{ // node used for Binary  Tree (named funny so as to not clash w
     TrieNode *rightChild;
 
     // Constructors
-    TrieNode() {
-        letter = " ";
-    }
+    TrieNode() : letter(" "), leftChild(nullptr), rightChild(nullptr) {}
 
     TrieNode(string aLetter, TrieNode *aLeftChild, TrieNode *aRightChild){
         letter = aLetter;

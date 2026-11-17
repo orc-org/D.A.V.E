@@ -51,6 +51,12 @@ class MotionCoordinatorNode(Node):
         # When rover_ekf runs, its pose is used and this node publishes world -> odom (identity) instead
         # of a second parent for base_link (world -> base_link conflicted with the EKF's odom -> base_link).
         self.declare_parameter('odom_topic', '/ekf/odometry')
+        self.declare_parameter('wheel_separation', 0.60)
+        self.declare_parameter('max_wheel_speed', 1.0)
+        self.declare_parameter('gripper_max_steps', 40000.0)
+        self.wheel_separation = float(self.get_parameter('wheel_separation').value)
+        self.max_wheel_speed = float(self.get_parameter('max_wheel_speed').value)
+        self.gripper_max_steps = float(self.get_parameter('gripper_max_steps').value)
         self.odom_timeout_s = 0.5
         self.last_odom_time = None
         self.using_odom = None   # for logging the switch between measured and simulated base pose
@@ -104,7 +110,7 @@ class MotionCoordinatorNode(Node):
         self._action_server = ActionServer(self, MoveToPoint, 'move_to_point', execute_callback=self.execute_move_goal)
 
         self.timer_period = 0.05
-        self.last_update_time = time.time()
+        self.last_update_time = time.monotonic()
         self.timer = self.create_timer(self.timer_period, self.update_loop)
         self.get_logger().info('Arm Controller: All Interfaces (Topic/Srv/Action) Loaded')
 
@@ -115,7 +121,12 @@ class MotionCoordinatorNode(Node):
     def fr_motor_cb(self, msg): self.fr_vel = msg.data
     def rl_motor_cb(self, msg): self.rl_vel = msg.data
     def rr_motor_cb(self, msg): self.rr_vel = msg.data
-    def gripper_state_cb(self, msg): self.gripper_pos = msg.data
+
+    def gripper_state_cb(self, msg):
+        if not math.isfinite(msg.data):
+            return
+        # Driver publishes raw steps; convert to normalized [0, 1] stroke for visualization
+        self.gripper_pos = max(0.0, min(1.0, float(msg.data) / max(self.gripper_max_steps, 1.0)))
 
     def arm_manual_vel_cb(self, msg):
         self.arm_manual_vel = msg.data
@@ -133,14 +144,14 @@ class MotionCoordinatorNode(Node):
         self.get_logger().info(f"Control Mode changed: {'AUTO (IK)' if self.auto_mode else 'MANUAL'}")
 
     def update_loop(self):
-        now_time = time.time()
+        now_time = time.monotonic()
         dt = now_time - self.last_update_time
         self.last_update_time = now_time
         if dt <= 0.0:
             return   # clock did not advance (or jumped back): skip rather than divide by zero below
 
         using_odom = self.last_odom_time is not None and \
-            time.monotonic() - self.last_odom_time < self.odom_timeout_s
+            now_time - self.last_odom_time < self.odom_timeout_s
         if using_odom != self.using_odom:
             self.using_odom = using_odom
             if using_odom:
@@ -150,14 +161,12 @@ class MotionCoordinatorNode(Node):
                                        "(visualisation only); publishing world -> base_link.")
 
         if not using_odom:
-            # calculate manual drive speeds from subscriptions
-            left_speed = (self.fl_vel + self.rl_vel) * 0.5
-            right_speed = (self.fr_vel + self.rr_vel) * 0.5
+            # calculate manual drive speeds from subscriptions using SI kinematics
+            left_speed = (self.fl_vel + self.rl_vel) * 0.5 * self.max_wheel_speed
+            right_speed = (self.fr_vel + self.rr_vel) * 0.5 * self.max_wheel_speed
 
-            # scale speed for visual simulation
-            scale = 3.0
-            linear_vel = (left_speed + right_speed) * 0.5 * scale
-            angular_vel = (right_speed - left_speed) * 0.5 * scale
+            linear_vel = (left_speed + right_speed) * 0.5
+            angular_vel = (right_speed - left_speed) / max(self.wheel_separation, 0.1)
 
             # update base position from wheel command integration
             self.base.angle_z += angular_vel * dt

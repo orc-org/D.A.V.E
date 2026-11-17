@@ -4,6 +4,7 @@
 #include <filesystem>
 #include <iostream>
 #include <memory>
+#include <mutex>
 #include <thread>
 #include <vector>
 
@@ -124,6 +125,7 @@ class NAVDisplay : public rclcpp::Node {
 
 private:
     bool resettingHome;
+    mutable std::mutex state_mutex_;
 
 public:
 
@@ -296,10 +298,12 @@ public:
                 // Update Values
                 ///////////////////////////////////////////////////////
 
-                // // update position Data for DaVE
-                // DaVE.setPosition(convertToPixelCoordinates(currentPosition));
-
-                DaVE.setPosition(convertToPixelCoordinates({0, 0}));
+                Vector2 livePosition;
+                {
+                    std::lock_guard<std::mutex> lock(state_mutex_);
+                    livePosition = currentPosition;
+                }
+                DaVE.setPosition(convertToPixelCoordinates(livePosition));
 
                 // update camera target
                 camera.target = DaVE.getPosition();
@@ -640,7 +644,12 @@ public:
                     DrawTexture(background, 0, 0, WHITE);
                     drawObstacles();
                     drawWaypoints();
-                    DrawCircle(convertToPixelCoordinates_x(nextWaypoint.x), convertToPixelCoordinates_y(nextWaypoint.y), 6, ORANGE);
+                    Vector2 liveNextWaypoint;
+                    {
+                        std::lock_guard<std::mutex> lock(state_mutex_);
+                        liveNextWaypoint = nextWaypoint;
+                    }
+                    DrawCircle(convertToPixelCoordinates_x(liveNextWaypoint.x), convertToPixelCoordinates_y(liveNextWaypoint.y), 6, ORANGE);
             
                 EndTextureMode();
 
@@ -726,6 +735,7 @@ public:
     }
 
     void getInfo(const DisplayInfo &data){
+        std::lock_guard<std::mutex> lock(state_mutex_);
         currentPosition.x = data.local_x;
         currentPosition.y = data.local_y;
         nextWaypoint.x = data.waypoint_local_x;
@@ -877,7 +887,7 @@ public:
     void removeLocalWaypoint_response(rclcpp::Client<RemoveLocal>::SharedFuture future){
         auto response = future.get();
 
-        std::cout << response->output << 'n';
+        std::cout << response->output << '\n';
     }
 
     void removeLocalWaypoint(int x, int y){
@@ -892,7 +902,7 @@ public:
     void removeLocalObstacle_response(rclcpp::Client<RemoveLocal>::SharedFuture future){
         auto response = future.get();
 
-        std::cout << response->output << 'n';
+        std::cout << response->output << '\n';
     }
 
     void removeLocalObstacle(int x, int y){
@@ -900,13 +910,13 @@ public:
         request->x = x;
         request->y = y;
 
-        RemoveLocalObstacleClient->async_send_request(request, std::bind(&NAVDisplay::removeLocalWaypoint_response, this,_1));
+        RemoveLocalObstacleClient->async_send_request(request, std::bind(&NAVDisplay::removeLocalObstacle_response, this,_1));
     }
 
     void removeLocal_response(rclcpp::Client<RemoveLocal>::SharedFuture future){
         auto response = future.get();
 
-        std::cout << response->output << 'n';
+        std::cout << response->output << '\n';
     }
 
     void removeLocal(int x, int y){
@@ -914,16 +924,17 @@ public:
         request->x = x;
         request->y = y;
 
-        RemoveLocalClient->async_send_request(request, std::bind(&NAVDisplay::removeLocalWaypoint_response, this,_1));
+        RemoveLocalClient->async_send_request(request, std::bind(&NAVDisplay::removeLocal_response, this,_1));
     }
 
     void removeLast_response(rclcpp::Client<RemoveLastWaypoint>::SharedFuture future){
         auto response = future.get();
 
-        std::cout << response->output << 'n';
+        std::cout << response->output << '\n';
     }
 
     void removeLast(){
+        if (wasAWaypointTheLastPointAdded.empty()) return;
         auto request = std::make_shared<RemoveLastWaypoint::Request>();
 
         if (!wasAWaypointTheLastPointAdded.back()){
