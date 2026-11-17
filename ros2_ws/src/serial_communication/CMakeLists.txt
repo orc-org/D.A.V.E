@@ -33,6 +33,11 @@ target_include_directories(XLRnode PUBLIC
   $<INSTALL_INTERFACE:include/serial_communication>
 )
 
+target_include_directories(XLR_UI PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include/serial_communication>
+  $<INSTALL_INTERFACE:include/serial_communication>
+)
+
 add_executable(morse_bridge_node 
   src/MorseBridgeNode.cpp
   src/SerialPort.cpp

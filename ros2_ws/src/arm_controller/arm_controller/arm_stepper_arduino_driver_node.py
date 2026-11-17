@@ -186,6 +186,8 @@ class ArmStepperArduinoDriverNode(Node):
         # Gripper step tracking
         self.current_gripper_step = 0
         self.target_gripper_step = 0
+        self.current_gripper_pos = 0.0
+        self.target_gripper_pos = 0.0
 
         self.last_control_time = time.time()
         self.last_log_time = 0.0
@@ -213,6 +215,8 @@ class ArmStepperArduinoDriverNode(Node):
         self.publish_gripper_state()
 
     def publish_gripper_state(self):
+        max_gripper_stroke_steps = max(1.0, float(self.gripper_steps_per_m * 0.2))
+        self.current_gripper_pos = max(0.0, min(1.0, float(self.current_gripper_step) / max_gripper_stroke_steps))
         state_msg = Float32()
         state_msg.data = float(self.current_gripper_step)
         self.gripper_state_pub.publish(state_msg)

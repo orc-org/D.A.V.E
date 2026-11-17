@@ -10,7 +10,6 @@
 #include "rclcpp_action/rclcpp_action.hpp"
 
 #include "enigma_machine_interfaces/msg/morse.hpp"
-#include "enigma_machine_interfaces/msg/morse_signal.hpp"
 #include "enigma_machine_interfaces/srv/get_password.hpp"
 #include "enigma_machine_interfaces/srv/set_message.hpp"
 #include "enigma_machine_interfaces/action/decode.hpp"

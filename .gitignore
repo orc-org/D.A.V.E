@@ -29,10 +29,17 @@ Thumbs.db
 *.swo
 
 # CMake/Build
+COLCON_IGNORE
 install_manifest.txt
 _CPack_Packages/
 CMakeFiles/
 CMakeCache.txt
+*.dtbo
+jetson_morse
+NAVnode
+*.o
+*.a
+*.so
 
 # User-specific
 .env
