@@ -7,7 +7,7 @@ labels: ["enhancement"]
 
 ### Functional Requirement ("The system shall...")
 *What capability, behavior, or user command does this implement?*
-> Example: The system shall rotate the rover chassis to a specified absolute heading (0°–360° True North) within a tolerance of ±2.0° upon receiving a `[Face Bearing]` command.
+Example: The system shall rotate the rover chassis to a specified absolute heading (0°–360° True North) within a tolerance of ±2.0° upon receiving a `[Face Bearing]` command.
 
 ### Non-Functional Constraints (The "How Well")
 *Describe the operational limits, quality targets, and safety boundaries for this feature:*
