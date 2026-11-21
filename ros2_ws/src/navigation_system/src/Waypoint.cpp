@@ -52,54 +52,80 @@ Waypoint::Waypoint(double coordinateA, double coordinateB, double coordinateC, b
 // Conversion Methods
 
 void Waypoint::geodetic_To_EarthCentred() {
-    double N = a / sqrt(1.0 - e2 * sin(latitude) * sin(latitude));
+    double latitudeRadians = latitude * pi / 180.0;
+    double longitudeRadians = longitude * pi / 180.0;
 
-    ECEF_x = (N + altitude) * cos(latitude) * cos(longitude);
-    ECEF_y = (N + altitude) * cos(latitude) * sin(longitude);
-    ECEF_z = (N * (1.0 - e2) + altitude) * sin(latitude);
+    double N = a / std::sqrt(
+        1.0 - e2 *
+        std::sin(latitudeRadians) *
+        std::sin(latitudeRadians)
+    );
+
+    ECEF_x =
+        (N + altitude) *
+        std::cos(latitudeRadians) *
+        std::cos(longitudeRadians);
+
+    ECEF_y =
+        (N + altitude) *
+        std::cos(latitudeRadians) *
+        std::sin(longitudeRadians);
+
+    ECEF_z =
+        (N * (1.0 - e2) + altitude) *
+        std::sin(latitudeRadians);
 }
 
 void Waypoint::EarthCentred_To_Local() {
+    // home_latitude / home_longitude are stored in degrees; the ENU rotation needs radians
+    const double lat0 = home_latitude * pi / 180.0;
+    const double lon0 = home_longitude * pi / 180.0;
     double dX = ECEF_x - home_ECEF_x;
     double dY = ECEF_y - home_ECEF_y;
     double dZ = ECEF_z - home_ECEF_z;
     
-    x = -sin(home_longitude) * dX 
-        +cos(home_latitude) * dY;
+    x = -sin(lon0) * dX 
+        +cos(lon0) * dY;
 
-    y = -sin(home_latitude) * cos(home_longitude) * dX 
-        -sin(home_latitude) * sin(home_longitude) * dY 
-        +cos(home_latitude) * dZ;
+    y = -sin(lat0) * cos(lon0) * dX 
+        -sin(lat0) * sin(lon0) * dY 
+        +cos(lat0) * dZ;
 }
 
 void Waypoint::local_To_EarthCentred() {
+    // home_latitude / home_longitude are stored in degrees; the ENU rotation needs radians
+    const double lat0 = home_latitude * pi / 180.0;
+    const double lon0 = home_longitude * pi / 180.0;
     double dX =
-        -sin(home_longitude) * x
-        -sin(home_latitude) * cos(home_longitude) * y;
+        -sin(lon0) * x
+        -sin(lat0) * cos(lon0) * y;
 
     double dY =
-            cos(home_longitude) * x
-        -sin(home_latitude) * sin(home_longitude) * y;
+            cos(lon0) * x
+        -sin(lat0) * sin(lon0) * y;
 
     double dZ =
-        cos(home_latitude) * y;
+        cos(lat0) * y;
 
     ECEF_x = home_ECEF_x + dX;
     ECEF_y = home_ECEF_y + dY;
     ECEF_z = home_ECEF_z + dZ;
 }
 
-std::array<double,3> Waypoint::local_To_EarthCentred(int x, int y){
+std::array<double,3> Waypoint::local_To_EarthCentred(double x, double y){
+    // home_latitude / home_longitude are stored in degrees; the ENU rotation needs radians
+    const double lat0 = home_latitude * pi / 180.0;
+    const double lon0 = home_longitude * pi / 180.0;
     double dX =
-        -sin(home_longitude) * x
-        -sin(home_latitude) * cos(home_longitude) * y;
+        -sin(lon0) * x
+        -sin(lat0) * cos(lon0) * y;
 
     double dY =
-            cos(home_longitude) * x
-        -sin(home_latitude) * sin(home_longitude) * y;
+            cos(lon0) * x
+        -sin(lat0) * sin(lon0) * y;
 
     double dZ =
-        cos(home_latitude) * y;
+        cos(lat0) * y;
 
     return {home_ECEF_x + dX, home_ECEF_y + dY, home_ECEF_z + dZ};
 }
@@ -124,11 +150,12 @@ void Waypoint::EarthCentred_To_GeodeticApprox() {
         latRad = atan2(ECEF_z, p * (1.0 - e2 * N / denom));
     }
 
-    latitude = latRad;
-    longitude = lonRad;
+    latitude = latRad * 180.0 / pi;
+    longitude = lonRad * 180.0 / pi;
+    altitude = h;
 }
 
-std::array<double,2> Waypoint::local_To_GeodeticApprox(int x, int y){
+std::array<double,2> Waypoint::local_To_GeodeticApprox(double x, double y){
     auto ECEF_point = local_To_EarthCentred(x, y);
 
     double p = sqrt(ECEF_point[0] * ECEF_point[0] + ECEF_point[1] * ECEF_point[1]);
@@ -148,7 +175,8 @@ std::array<double,2> Waypoint::local_To_GeodeticApprox(int x, int y){
         latRad = atan2(ECEF_point[2], p * (1.0 - e2 * N / denom));
     }
 
-    return {latRad, lonRad};
+    // returned as {latitude, longitude} in degrees, matching Waypoint::latitude / longitude
+    return {latRad * 180.0 / pi, lonRad * 180.0 / pi};
 }
 
 #endif // WAYPOINT_CPP

@@ -18,10 +18,21 @@ pkill -f "rviz2" 2>/dev/null
 pkill -f "rosbridge_websocket" 2>/dev/null
 pkill -f "python.*http.server" 2>/dev/null
 pkill -f "sim_drive_bridge" 2>/dev/null
+pkill -f "sim_sensor_bridge" 2>/dev/null
 pkill -f "drive_node" 2>/dev/null
 pkill -f "motion_coordinator" 2>/dev/null
 pkill -f "vesc_can_driver_node" 2>/dev/null
+pkill -f "ekf_node" 2>/dev/null
+pkill -f "NAVnode" 2>/dev/null
+pkill -f "rosapi" 2>/dev/null
 sleep 1
+
+# Under WSL2 the GPU OpenGL driver crashes Gazebo's ogre2 renderer (needed by the simulated
+# LiDAR and cameras), so fall back to Mesa software rendering. Slower, but it works.
+if grep -qi microsoft /proc/version 2>/dev/null; then
+    export LIBGL_ALWAYS_SOFTWARE=1
+    echo "WSL detected: using software OpenGL (LIBGL_ALWAYS_SOFTWARE=1); simulated sensor rates will be low"
+fi
 
 echo "starting d.a.v.e. modern gazebo and dashboard system..."
 
@@ -56,10 +67,20 @@ echo "starting dashboard web server on port 8000..."
 python3 -m http.server 8000 --directory "$SCRIPT_DIR/dashboard" > /tmp/webserver_sim.log 2>&1 &
 WEB_PID=$!
 
-# launch modern gazebo, rviz, and drive subsystem
+# launch modern gazebo, rviz, and drive subsystem (forwards any CLI launch args like use_sim_stack:=true or world:=...)
 echo "launching modern gazebo (ros_gz), rviz, and drive subsystem..."
-ros2 launch rover_description sim.launch.py > /tmp/gazebo_sim.log 2>&1 &
+ros2 launch rover_description sim.launch.py "$@" > /tmp/gazebo_sim.log 2>&1 &
 SIM_PID=$!
+
+# report children that died during start-up instead of claiming success
+sleep 3
+for pair in "rosbridge:$ROSBRIDGE_PID:/tmp/rosbridge_sim.log" "dashboard helper:$HELPER_PID:/tmp/dashboard_helper.log" "web server:$WEB_PID:/tmp/webserver_sim.log" "gazebo launch:$SIM_PID:/tmp/gazebo_sim.log"; do
+    IFS=: read -r pname ppid plog <<< "$pair"
+    if ! kill -0 "$ppid" 2>/dev/null; then
+        echo "warning: $pname exited during start-up; last log lines ($plog):"
+        tail -n 5 "$plog" 2>/dev/null
+    fi
+done
 
 echo "all systems started"
 echo "dashboard: http://localhost:8000"
@@ -79,10 +100,14 @@ cleanup() {
     pkill -f "robot_state_publisher" 2>/dev/null
     pkill -f "rviz2" 2>/dev/null
     pkill -f "sim_drive_bridge" 2>/dev/null
+    pkill -f "sim_sensor_bridge" 2>/dev/null
     pkill -f "drive_node" 2>/dev/null
     pkill -f "motion_coordinator" 2>/dev/null
     pkill -f "vesc_can_driver_node" 2>/dev/null
+    pkill -f "ekf_node" 2>/dev/null
+    pkill -f "NAVnode" 2>/dev/null
     pkill -f "rosbridge_websocket" 2>/dev/null
+    pkill -f "rosapi" 2>/dev/null
     pkill -f "python3.*dashboard_helper" 2>/dev/null
     exit 0
 }

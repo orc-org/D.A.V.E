@@ -1,6 +1,8 @@
 import rclpy
 from rclpy.node import Node
-from rclpy.action import ActionServer
+from rclpy.action import ActionServer, CancelResponse
+from rclpy.callback_groups import ReentrantCallbackGroup
+from rclpy.executors import MultiThreadedExecutor
 from sensor_msgs.msg import JointState
 from std_msgs.msg import Float32
 from arm_interfaces.action import GripperCommand
@@ -224,9 +226,13 @@ class ArmStepperDriverNode(Node):
         # Gripper step tracking
         self.current_gripper_step = 0
         self.target_gripper_step = 0
+        self.current_gripper_pos = 1.0
+        self.target_gripper_pos = 1.0
 
-        self.last_control_time = time.time()
+        self.last_control_time = time.monotonic()
         self.last_log_time = 0.0
+
+        self._cb_group = ReentrantCallbackGroup()
 
         # ROS 2 Subscriptions & Publishers
         self.joint_sub = self.create_subscription(JointState, 'joint_states', self.joint_state_callback, 10)
@@ -234,7 +240,14 @@ class ArmStepperDriverNode(Node):
         self.gripper_manual_vel_sub = self.create_subscription(Float32, '/gripper_manual_vel', self.gripper_manual_vel_callback, 10)
         self.gripper_state_pub = self.create_publisher(Float32, '/gripper_state', 10)
         self.gripper_target_sub = self.create_subscription(Float32, '/gripper_target', self.gripper_target_callback, 10)
-        self.gripper_action_server = ActionServer(self, GripperCommand, 'gripper_command', self.execute_gripper_goal)
+        self.gripper_action_server = ActionServer(
+            self,
+            GripperCommand,
+            'gripper_command',
+            execute_callback=self.execute_gripper_goal,
+            cancel_callback=lambda goal_handle: CancelResponse.ACCEPT,
+            callback_group=self._cb_group,
+        )
 
         self.manual_vel_input = 0.0
         self.last_manual_vel_time = 0.0
@@ -242,7 +255,7 @@ class ArmStepperDriverNode(Node):
         self.last_gripper_manual_vel_time = 0.0
 
         # 50Hz high-speed control loop
-        self.control_timer = self.create_timer(0.02, self.control_and_step_loop)
+        self.control_timer = self.create_timer(0.02, self.control_and_step_loop, callback_group=self._cb_group)
 
         self.get_logger().info('Arm & Gripper DM556Y High-Speed PWM Stepper Node Running.')
         self.get_logger().info(f'Arm conversion: {self.arm_steps_per_rad:.2f} steps/rad | Step Freq: {self.arm_step_freq_hz/1000:.1f} kHz')
@@ -251,20 +264,22 @@ class ArmStepperDriverNode(Node):
         self.publish_gripper_state()
 
     def publish_gripper_state(self):
+        max_gripper_stroke_steps = max(1.0, float(self.gripper_steps_per_m * 0.2))
+        self.current_gripper_pos = max(0.0, min(1.0, 1.0 - (float(self.current_gripper_step) / max_gripper_stroke_steps)))
         state_msg = Float32()
         state_msg.data = float(self.current_gripper_step)
         self.gripper_state_pub.publish(state_msg)
 
     def manual_vel_callback(self, msg):
         self.manual_vel_input = msg.data
-        self.last_manual_vel_time = time.time()
+        self.last_manual_vel_time = time.monotonic()
 
     def gripper_manual_vel_callback(self, msg):
         self.gripper_manual_vel_input = msg.data
-        self.last_gripper_manual_vel_time = time.time()
+        self.last_gripper_manual_vel_time = time.monotonic()
 
     def joint_state_callback(self, msg):
-        now_time = time.time()
+        now_time = time.monotonic()
         if (now_time - self.last_manual_vel_time < 0.4) and (abs(self.manual_vel_input) > 0.01):
             return
         if 'arm_joint' in msg.name:
@@ -276,7 +291,7 @@ class ArmStepperDriverNode(Node):
         self.target_gripper_step = int(msg.data)
 
     def control_and_step_loop(self):
-        now_time = time.time()
+        now_time = time.monotonic()
         dt = now_time - self.last_control_time
         self.last_control_time = now_time
 
@@ -355,21 +370,31 @@ class ArmStepperDriverNode(Node):
             )
 
     def execute_gripper_goal(self, goal_handle):
-        target_pos = goal_handle.request.position
+        target_pos = max(0.0, min(1.0, float(goal_handle.request.position)))
         self.target_gripper_pos = target_pos
         finger_linear_pos = (1.0 - self.target_gripper_pos) * 0.2
         self.target_gripper_step = int(finger_linear_pos * self.gripper_steps_per_m)
-        
+
         self.get_logger().info(f'Action Gripper Command received: moving to target pos {target_pos:.2f}')
-        
+
         feedback_msg = GripperCommand.Feedback()
-        rate = self.create_rate(10)
-        
-        while abs(self.current_gripper_pos - target_pos) > 0.01:
+        deadline = time.monotonic() + 15.0
+
+        while rclpy.ok() and abs(self.current_gripper_pos - target_pos) > 0.01:
+            if goal_handle.is_cancel_requested:
+                goal_handle.canceled()
+                result = GripperCommand.Result()
+                result.success = False
+                return result
+            if time.monotonic() > deadline:
+                goal_handle.abort()
+                result = GripperCommand.Result()
+                result.success = False
+                return result
             feedback_msg.progress = float(self.current_gripper_pos)
             goal_handle.publish_feedback(feedback_msg)
-            rate.sleep()
-            
+            time.sleep(0.1)
+
         goal_handle.succeed()
         result = GripperCommand.Result()
         result.success = True
@@ -382,7 +407,14 @@ class ArmStepperDriverNode(Node):
                 self.arm_hw.shutdown_pins_low()
                 self.gripper_hw.shutdown_pins_low()
                 time.sleep(0.01)  # Short 10ms delay for electrical levels to settle
-                GPIO.cleanup()
+                # Clean up only this node's stepper pins so sibling nodes' GPIO outputs stay active
+                own_pins = [
+                    p for p in (
+                        self.arm_step_pin, self.arm_dir_pin, self.arm_enable_pin,
+                        self.gripper_step_pin, self.gripper_dir_pin, self.gripper_enable_pin,
+                    ) if p is not None
+                ]
+                GPIO.cleanup(own_pins)
             except Exception:
                 pass
         super().destroy_node()
@@ -391,11 +423,14 @@ class ArmStepperDriverNode(Node):
 def main(args=None):
     rclpy.init(args=args)
     node = ArmStepperDriverNode()
+    executor = MultiThreadedExecutor()
+    executor.add_node(node)
     try:
-        rclpy.spin(node)
+        executor.spin()
     except Exception:
         pass
     finally:
+        executor.shutdown()
         node.destroy_node()
         rclpy.shutdown()
 

@@ -114,6 +114,9 @@
   <xacro:wheel prefix="rear_left"   x_offset="-${wheel_x_off}" y_offset="${wheel_y_off}" />
   <xacro:wheel prefix="rear_right"  x_offset="-${wheel_x_off}" y_offset="-${wheel_y_off}" />
 
+  <!-- simulated LiDAR, IMU and depth camera (SLAM sensor contract) -->
+  <xacro:include filename="sensors.xacro" />
+
   <!-- robotic arm and manipulator (modular component) -->
   <!-- to attach the robotic arm, simply uncomment the line below: -->
   <!-- <xacro:include filename="rover_arm.xacro" /> -->

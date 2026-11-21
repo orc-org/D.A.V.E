@@ -2,6 +2,7 @@ import rclpy
 from rclpy.node import Node
 from rclpy.action import ActionServer
 from geometry_msgs.msg import Point, Twist, TransformStamped
+from nav_msgs.msg import Odometry
 from sensor_msgs.msg import JointState
 from std_msgs.msg import Float32, Bool
 from tf2_ros import TransformBroadcaster
@@ -14,9 +15,8 @@ from arm_interfaces.action import MoveToPoint
 import os
 import yaml
 import math
-import matplotlib.pyplot as plt
-from matplotlib.animation import FuncAnimation
-from matplotlib.widgets import Slider
+# matplotlib is imported in main() only when show_plot is set; a module-level import made the node
+# fail to start wherever matplotlib is not installed (the Jetson image)
 from arm_controller.kinematics import Component3D
 import threading
 import time
@@ -43,6 +43,23 @@ class MotionCoordinatorNode(Node):
         
         self.declare_parameter('show_plot', False)
         self.show_plot = self.get_parameter('show_plot').value
+        # Auto mode used to publish /cmd_vel from IK run against a base pose INTEGRATED FROM COMMANDS
+        # (x 3.0), so the arm node could drive the rover on a made-up pose. Off by default: auto mode then
+        # moves the arm only. Enable only in simulation or with a real pose on /ekf/odometry.
+        self.declare_parameter('allow_base_motion', False)
+        self.allow_base_motion = bool(self.get_parameter('allow_base_motion').value)
+        # When rover_ekf runs, its pose is used and this node publishes world -> odom (identity) instead
+        # of a second parent for base_link (world -> base_link conflicted with the EKF's odom -> base_link).
+        self.declare_parameter('odom_topic', '/ekf/odometry')
+        self.declare_parameter('wheel_separation', 0.60)
+        self.declare_parameter('max_wheel_speed', 1.0)
+        self.declare_parameter('gripper_max_steps', 40000.0)
+        self.wheel_separation = float(self.get_parameter('wheel_separation').value)
+        self.max_wheel_speed = float(self.get_parameter('max_wheel_speed').value)
+        self.gripper_max_steps = float(self.get_parameter('gripper_max_steps').value)
+        self.odom_timeout_s = 0.5
+        self.last_odom_time = None
+        self.using_odom = None   # for logging the switch between measured and simulated base pose
 
         self.target_x, self.target_y, self.target_z = 25.0, 0.0, 2.0
         
@@ -77,6 +94,9 @@ class MotionCoordinatorNode(Node):
         self.rr_motor_sub = self.create_subscription(Float32, '/motor/rear_right', self.rr_motor_cb, 10)
         self.gripper_state_sub = self.create_subscription(Float32, '/gripper_state', self.gripper_state_cb, 10)
 
+        self.odom_sub = self.create_subscription(
+            Odometry, self.get_parameter('odom_topic').value, self.odom_cb, 10)
+
         self.auto_mode = False
         self.auto_mode_sub = self.create_subscription(Bool, '/auto_mode', self.auto_mode_cb, 10)
 
@@ -90,7 +110,7 @@ class MotionCoordinatorNode(Node):
         self._action_server = ActionServer(self, MoveToPoint, 'move_to_point', execute_callback=self.execute_move_goal)
 
         self.timer_period = 0.05
-        self.last_update_time = time.time()
+        self.last_update_time = time.monotonic()
         self.timer = self.create_timer(self.timer_period, self.update_loop)
         self.get_logger().info('Arm Controller: All Interfaces (Topic/Srv/Action) Loaded')
 
@@ -101,35 +121,69 @@ class MotionCoordinatorNode(Node):
     def fr_motor_cb(self, msg): self.fr_vel = msg.data
     def rl_motor_cb(self, msg): self.rl_vel = msg.data
     def rr_motor_cb(self, msg): self.rr_vel = msg.data
-    def gripper_state_cb(self, msg): self.gripper_pos = msg.data
+
+    def gripper_state_cb(self, msg):
+        if not math.isfinite(msg.data):
+            return
+        # Driver publishes raw steps; convert to normalized [0, 1] stroke for visualization
+        self.gripper_pos = max(0.0, min(1.0, float(msg.data) / max(self.gripper_max_steps, 1.0)))
 
     def arm_manual_vel_cb(self, msg):
         self.arm_manual_vel = msg.data
+
+    def odom_cb(self, msg):
+        # measured base pose (planar) from rover_ekf
+        p, q = msg.pose.pose.position, msg.pose.pose.orientation
+        self.base.offset_x = p.x
+        self.base.offset_y = p.y
+        self.base.angle_z = math.atan2(2.0 * (q.w * q.z + q.x * q.y), 1.0 - 2.0 * (q.y * q.y + q.z * q.z))
+        self.last_odom_time = time.monotonic()
 
     def auto_mode_cb(self, msg):
         self.auto_mode = msg.data
         self.get_logger().info(f"Control Mode changed: {'AUTO (IK)' if self.auto_mode else 'MANUAL'}")
 
     def update_loop(self):
-        now_time = time.time()
+        now_time = time.monotonic()
         dt = now_time - self.last_update_time
         self.last_update_time = now_time
+        if dt <= 0.0:
+            return   # clock did not advance (or jumped back): skip rather than divide by zero below
 
-        # calculate manual drive speeds from subscriptions
-        left_speed = (self.fl_vel + self.rl_vel) * 0.5
-        right_speed = (self.fr_vel + self.rr_vel) * 0.5
+        using_odom = self.last_odom_time is not None and \
+            now_time - self.last_odom_time < self.odom_timeout_s
+        if using_odom != self.using_odom:
+            self.using_odom = using_odom
+            if using_odom:
+                self.get_logger().info("Base pose from /ekf/odometry (measured); publishing world -> odom.")
+            else:
+                self.get_logger().warn("No fresh /ekf/odometry: base pose is SIMULATED from motor commands "
+                                       "(visualisation only); publishing world -> base_link.")
 
-        # scale speed for visual simulation
-        scale = 3.0 
-        linear_vel = (left_speed + right_speed) * 0.5 * scale
-        angular_vel = (right_speed - left_speed) * 0.5 * scale
+        if not using_odom:
+            # calculate manual drive speeds from subscriptions using SI kinematics
+            left_speed = (self.fl_vel + self.rl_vel) * 0.5 * self.max_wheel_speed
+            right_speed = (self.fr_vel + self.rr_vel) * 0.5 * self.max_wheel_speed
 
-        # update base position from wheel telemetry integration
-        self.base.angle_z += angular_vel * dt
-        self.base.offset_x += linear_vel * math.cos(self.base.angle_z) * dt
-        self.base.offset_y += linear_vel * math.sin(self.base.angle_z) * dt
+            linear_vel = (left_speed + right_speed) * 0.5
+            angular_vel = (right_speed - left_speed) / max(self.wheel_separation, 0.1)
 
-        if self.auto_mode:
+            # update base position from wheel command integration
+            self.base.angle_z += angular_vel * dt
+            self.base.offset_x += linear_vel * math.cos(self.base.angle_z) * dt
+            self.base.offset_y += linear_vel * math.sin(self.base.angle_z) * dt
+
+        if self.auto_mode and not self.allow_base_motion:
+            # arm-only IK: the base stays where it is and nothing is sent to the wheels
+            # (the IK also wiggles the base's free yaw, so restore the pose afterwards)
+            orig = (self.base.offset_x, self.base.offset_y, self.base.angle_z)
+            self.base.inverse_kinematics(
+                self.tool, self.target_x, self.target_y, self.target_z,
+                learning_rate=2.0, max_iterations=20, move_base=False)
+            self.base.offset_x, self.base.offset_y, self.base.angle_z = orig
+            self.cmd_linear_x = 0.0
+            self.cmd_angular_z = 0.0
+        elif self.auto_mode:
             # save original base pose before running IK
             orig_x = self.base.offset_x
             orig_y = self.base.offset_y
@@ -197,8 +251,8 @@ class MotionCoordinatorNode(Node):
             'right_finger_joint',
             'gripper_motor_shaft_joint'
         ]
-        # prismatic finger limit mapping: moves inward (negative direction)
-        finger_val = -self.gripper_pos * 0.2
+        # prismatic finger joint limits in rover_arm.xacro are [-0.02, 0.04] m (0=open +0.04, 1=closed -0.02)
+        finger_val = 0.04 - self.gripper_pos * 0.06
         js.position = [
             float(self.wrist.angle_y),
             float(self.fl_wheel_angle),
@@ -211,16 +265,21 @@ class MotionCoordinatorNode(Node):
         ]
         self.joint_state_pub.publish(js)
 
-        # update 3D model base position (TF)
+        # update 3D model base position (TF). With the EKF running, base_link already has the parent odom,
+        # so only world -> odom (identity) is published to keep the dashboard's 'world' view connected.
         t = TransformStamped()
         t.header.stamp = js.header.stamp
         t.header.frame_id = 'world'
-        t.child_frame_id = 'base_link'
-        t.transform.translation.x = float(self.base.offset_x)
-        t.transform.translation.y = float(self.base.offset_y)
-        t.transform.translation.z = 0.0
-        t.transform.rotation.z = math.sin(self.base.angle_z / 2.0)
-        t.transform.rotation.w = math.cos(self.base.angle_z / 2.0)
+        if using_odom:
+            t.child_frame_id = 'odom'
+            t.transform.rotation.w = 1.0
+        else:
+            t.child_frame_id = 'base_link'
+            t.transform.translation.x = float(self.base.offset_x)
+            t.transform.translation.y = float(self.base.offset_y)
+            t.transform.translation.z = 0.0
+            t.transform.rotation.z = math.sin(self.base.angle_z / 2.0)
+            t.transform.rotation.w = math.cos(self.base.angle_z / 2.0)
         self.tf_broadcaster.sendTransform(t)
 
         # publish status and global position
@@ -259,6 +318,8 @@ def main(args=None):
     node = MotionCoordinatorNode()
     
     if node.show_plot:
+        import matplotlib.pyplot as plt
+        from matplotlib.animation import FuncAnimation
         spin_thread = threading.Thread(target=rclpy.spin, args=(node,), daemon=True)
         spin_thread.start()
         fig = plt.figure(figsize=(10, 8))

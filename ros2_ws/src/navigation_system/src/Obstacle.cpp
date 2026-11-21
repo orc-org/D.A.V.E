@@ -23,6 +23,7 @@ double Obstacle::getAltitude() { return altitude; }
 double Obstacle::getECEF_x(){ return ECEF_x; }
 double Obstacle::getECEF_y(){ return ECEF_y; }
 double Obstacle::getECEF_z(){ return ECEF_z; }
+void Obstacle::rebaseToHome(){ EarthCentred_To_Local(); }
 
     // constructors
 Obstacle::Obstacle() : Waypoint(0.0, 0.0), radius(defaultRadius) {

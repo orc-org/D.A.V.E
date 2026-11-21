@@ -47,8 +47,11 @@ def reset_stepper_gpios():
         # Short delay to allow electrical voltage levels on signal lines to settle
         time.sleep(0.1)
 
+        # NOTE: cleanup() releases the pins back to the kernel (inputs, floating), so they are
+        # driven LOW only until this line. The point of the script is to free pins that a crashed
+        # node left claimed; it does not hold the outputs low afterwards.
         GPIO.cleanup()
-        print("[SUCCESS] All stepper GPIO pins successfully forced to LOW (0.0V) and cleaned up.")
+        print("[SUCCESS] Stepper GPIO pins pulsed LOW and released (they are no longer driven).")
     except Exception as e:
         print(f"[ERROR] An exception occurred while resetting GPIO pins: {e}")
         try:

@@ -213,19 +213,27 @@ class DashboardHelperNode(Node):
             else:
                 try:
                     self.get_logger().info(f"Starting process: {proc_info['name']} via command: {cmd}")
-                    cmd_str = " ".join(cmd)
+                    launch_cmd = list(cmd)
+                    if key == "nav_node" and self.is_running(self.processes["gps_bridge"]["pattern"]):
+                        launch_cmd.extend(["--ros-args", "-p", "use_gps_fix_topic:=true"])
+                        self.get_logger().info(
+                            "gps_bridge is active: starting NAVnode with use_gps_fix_topic:=true to share GNSS cleanly."
+                        )
+                    cmd_str = " ".join(launch_cmd)
                     install_setup = os.path.join(self.repo_root, "ros2_ws/install/setup.bash")
                     full_cmd = [
                         "bash", "-c",
-                        f"source /opt/ros/humble/setup.bash 2>/dev/null; source {install_setup} 2>/dev/null; exec {cmd_str}"
+                        f"source /opt/ros/humble/setup.bash 2>/dev/null || true; "
+                        f"if [ -f '{install_setup}' ]; then source '{install_setup}'; fi; "
+                        f"exec {cmd_str}"
                     ]
-                    log_file = open(f"/tmp/dashboard_proc_{key}.log", "w")
-                    proc = subprocess.Popen(
-                        full_cmd,
-                        stdout=log_file,
-                        stderr=log_file,
-                        preexec_fn=os.setsid
-                    )
+                    with open(f"/tmp/dashboard_proc_{key}.log", "w") as log_file:
+                        proc = subprocess.Popen(
+                            full_cmd,
+                            stdout=log_file,
+                            stderr=log_file,
+                            preexec_fn=os.setsid
+                        )
                     proc_info["proc"] = proc
                     response.success = True
                     response.message = f"Started {proc_info['name']} successfully."

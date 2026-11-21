@@ -37,6 +37,7 @@ public:
     double getECEF_x();
     double getECEF_y();
     double getECEF_z();
+    void rebaseToHome();
 
     // constructors
     Obstacle();

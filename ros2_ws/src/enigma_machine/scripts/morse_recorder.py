@@ -25,6 +25,7 @@ class MorseRecorderNode(Node):
         self.declare_parameter('camera_device', '0')
         self.declare_parameter('brightness_threshold', 240)
         self.declare_parameter('pixel_count_threshold', 150)  # Calibrated for 320x180 downscaled resolution
+        self.declare_parameter('show_debug_window', False)
 
         self.source = self.get_parameter('source').value
         self.udp_port = self.get_parameter('udp_port').value
@@ -32,6 +33,8 @@ class MorseRecorderNode(Node):
         self.camera_device = self.get_parameter('camera_device').value
         self.brightness_thresh = self.get_parameter('brightness_threshold').value
         self.pixel_thresh = self.get_parameter('pixel_count_threshold').value
+        self.show_debug_window = bool(self.get_parameter('show_debug_window').value)
+        self._state_lock = threading.Lock()
 
         # Register Dynamic Parameter Change Callback
         self.add_on_set_parameters_callback(self.on_param_change)
@@ -137,7 +140,8 @@ class MorseRecorderNode(Node):
         return SetParametersResult(successful=True)
 
     def handle_reset(self, request, response):
-        self.reset_buffer()
+        with self._state_lock:
+            self.reset_buffer()
         response.success = True
         response.message = "Morse buffer reset successfully."
         return response
@@ -146,7 +150,7 @@ class MorseRecorderNode(Node):
         self.morse_string = ""
         self.light_durations = []
         self.start_time = None
-        self.last_off_time = 0
+        self.last_off_time = 0.0
         self.is_light_on = False
         self.publish_current_morse()
         self.get_logger().info("Morse code buffer reset.")
@@ -165,63 +169,65 @@ class MorseRecorderNode(Node):
         pix_msg.data = int(pixel_count)
         self.pixel_pub.publish(pix_msg)
 
-        now = time.time()
+        now = time.monotonic()
 
-        if pixel_count > self.pixel_thresh:
-            if not self.is_light_on:
-                # Auto-reset buffer if inactive for > 10 seconds before a new message starts
-                if self.last_off_time > 0 and (now - self.last_off_time > 10.0) and self.morse_string:
-                    self.get_logger().info("Inactivity timeout (>10s): Auto-clearing old Morse buffer for new message session.")
-                    self.reset_buffer()
+        with self._state_lock:
+            if pixel_count > self.pixel_thresh:
+                if not self.is_light_on:
+                    # Auto-reset buffer if inactive for > 10 seconds before a new message starts
+                    if self.last_off_time > 0.0 and (now - self.last_off_time > 10.0) and self.morse_string:
+                        self.get_logger().info("Inactivity timeout (>10s): Auto-clearing old Morse buffer for new message session.")
+                        self.reset_buffer()
 
-                self.start_time = now
-                self.is_light_on = True
-                self.get_logger().info(f"Light Detected: ON | Pixel Count: {pixel_count} (Req: >{self.pixel_thresh})")
-                
-                # Check for space duration between letters/words
-                off_duration = now - self.last_off_time
-                if self.light_durations:
-                    min_dur = min(self.light_durations)
-                    if off_duration > (min_dur * 5.5):
-                        if not self.morse_string.endswith("  "):
-                            self.morse_string += "  "  # Double space between words
-                            self.publish_current_morse()
-                    elif off_duration > (min_dur * 1.8):
-                        if not self.morse_string.endswith(" "):
-                            self.morse_string += " "   # Single space between letters
-                            self.publish_current_morse()
-        else:
-            if self.is_light_on:
-                duration = now - self.start_time
-                self.light_durations.append(duration)
-                if len(self.light_durations) > 20:
-                    self.light_durations = self.light_durations[-20:]  # Sliding window of last 20 pulses
+                    self.start_time = now
+                    self.is_light_on = True
+                    self.get_logger().info(f"Light Detected: ON | Pixel Count: {pixel_count} (Req: >{self.pixel_thresh})")
+                    
+                    # Check for space duration between letters/words
+                    off_duration = now - self.last_off_time
+                    if self.light_durations:
+                        min_dur = min(self.light_durations)
+                        if off_duration > (min_dur * 5.5):
+                            if not self.morse_string.endswith("  "):
+                                self.morse_string += "  "  # Double space between words
+                                self.publish_current_morse()
+                        elif off_duration > (min_dur * 1.8):
+                            if not self.morse_string.endswith(" "):
+                                self.morse_string += " "   # Single space between letters
+                                self.publish_current_morse()
+            else:
+                if self.is_light_on:
+                    duration = now - self.start_time
+                    self.light_durations.append(duration)
+                    if len(self.light_durations) > 20:
+                        self.light_durations = self.light_durations[-20:]  # Sliding window of last 20 pulses
 
-                self.is_light_on = False
-                self.get_logger().info(f"Light Detected: OFF | Duration: {duration:.2f}s")
+                    self.is_light_on = False
+                    self.get_logger().info(f"Light Detected: OFF | Duration: {duration:.2f}s")
 
-                # Reconstruct dit (*) or daw (-) based on duration
-                if len(self.light_durations) == 1:
-                    # Assume first signal is a dot (dit) to initialize baseline
-                    self.morse_string += "*"
-                else:
-                    # Compare to the minimum seen pulse duration
-                    min_dur = min(self.light_durations)
-                    if duration > (min_dur * 2):
-                        self.morse_string += "-"  # Dash (daw)
+                    # Reconstruct dit (*) or daw (-) based on duration
+                    if len(self.light_durations) == 1:
+                        # Assume first signal is a dot (dit) to initialize baseline
+                        self.morse_string += "*"
                     else:
-                        self.morse_string += "*"  # Dot (dit)
-                
-                self.get_logger().info(f"Current Morse String: {self.morse_string}")
-                self.publish_current_morse()
-                self.last_off_time = now
+                        # Compare to the minimum seen pulse duration
+                        min_dur = min(self.light_durations)
+                        if duration > (min_dur * 2):
+                            self.morse_string += "-"  # Dash (daw)
+                        else:
+                            self.morse_string += "*"  # Dot (dit)
+                    
+                    self.get_logger().info(f"Current Morse String: {self.morse_string}")
+                    self.publish_current_morse()
+                    self.last_off_time = now
 
-        # Optionally show image in debug window if running in desktop environment
-        try:
-            cv2.imshow('Threshold Feed (Debug)', thresh)
-            cv2.waitKey(1)
-        except Exception:
-            pass
+        # Show debug feed only when requested explicitly (unsafe in headless/background service mode)
+        if self.show_debug_window:
+            try:
+                cv2.imshow('Threshold Feed (Debug)', thresh)
+                cv2.waitKey(1)
+            except Exception:
+                pass
 
     def publish_current_morse(self):
         msg = Morse()

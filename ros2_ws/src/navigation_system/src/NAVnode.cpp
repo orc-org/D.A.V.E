@@ -1,7 +1,11 @@
 #include "NAVnode.hpp"
+#include "nav_nmea.hpp"
+#include <algorithm>
 
 using std::placeholders::_1;
 using std::placeholders::_2;
+using nav_nmea::nmeaToDegrees;
+using nav_nmea::nmeaFields;
 
 class DummyGPS{
 public:
@@ -22,18 +26,21 @@ public:
 //DummyGPS* GNSS = new DummyGPS();
 
 void NAVnode::checkWaypointCollisions(){
-    std::sort(obstacles, obstacles + obstacleCount); 
     ListNode* current = routes[routeToEdit].getHead();
     while (current != nullptr) {
-        for (int i = 0; i < obstacleCount; i++) {
-            double dx = current->point->getX() - obstacles[i]->getX();
-            double dy = current->point->getY() - obstacles[i]->getY();
-            if (sqrt(dx*dx + dy*dy) < obstacles[i]->getRadius()) {
-                waypointCollisionDetected(current, obstacles[i]);
-                break; // No need to check other obstacles if a collision is detected
-            }
+    ListNode* next = current->next;
+
+    for (int i = 0; i < obstacleCount; i++) {
+        double dx = current->point->getX() - obstacles[i]->getX();
+        double dy = current->point->getY() - obstacles[i]->getY();
+
+        if (std::sqrt(dx * dx + dy * dy) < obstacles[i]->getRadius()) {
+            waypointCollisionDetected(current, obstacles[i]);
+            break;
         }
-        current = current->next;
+    }
+
+        current = next;
     }
 }
 
@@ -72,7 +79,11 @@ void NAVnode::checkTrackCollisions(){
     current = current->next;
     while (current != nullptr) {
         for (int i = 0; i < obstacleCount; i++) {
-            auto pointOfInterest = calculatePointOfInterest(current->previous, current, obstacles[i]);
+            auto pointOfInterest = calculatePointOfInterest(
+                current->previous,
+                current,
+                obstacles[i]
+            );
             double dx = obstacles[i]->getX() - pointOfInterest[0]; 
             double dy = obstacles[i]->getY() - pointOfInterest[1];
             double distanceToCenter = sqrt(dx * dx + dy * dy);
@@ -152,6 +163,15 @@ void NAVnode::waypointCollisionDetected(ListNode* node, Obstacle* obstacle){
     switch (circumnavigationStyle){
         case(reroute): routes[routeToEdit].remove(node); break;
         case(trackCrawling): {
+            if (node == nullptr || node->point == nullptr) {
+                return;
+            }
+
+            if (node->previous == nullptr || node->next == nullptr) {
+                routes[routeToEdit].remove(node);
+                return;
+            }
+
             auto pointOfInterest = calculatePointOfInterest(node->previous, node, obstacle);
                 
             /* create a new node to store another waypoint
@@ -171,6 +191,7 @@ void NAVnode::waypointCollisionDetected(ListNode* node, Obstacle* obstacle){
                 // check if the previous waypoint is within 1 radii of the waypoint we just made
                 double dx = node->previous->point->getX() - newWaypoint->point->getX();
                 double dy = node->previous->point->getY() - newWaypoint->point->getY();
+                
                 delete newWaypoint;
                 
                 if (!(sqrt(dx * dx + dy * dy) < obstacle->getRadius())){
@@ -192,7 +213,18 @@ void NAVnode::waypointCollisionDetected(ListNode* node, Obstacle* obstacle){
             */
             double dx = node->next->point->getX() - node->point->getX();
             double dy = node->next->point->getY() - node->point->getY();
-            double* unitVectorToNextWaypoint = new double[2]{dx / sqrt(dx * dx + dy* dy), dy / sqrt(dx * dx + dy * dy)};
+
+            double distanceToNextWaypoint = std::sqrt(dx * dx + dy * dy);
+            
+            if (distanceToNextWaypoint < 1e-9){
+                routes[routeToEdit].remove(node);
+                return;
+            }
+
+            double* unitVectorToNextWaypoint = new double[2]{
+                dx / distanceToNextWaypoint,
+                dy / distanceToNextWaypoint
+            };
                 
             newWaypoint = new ListNode(nullptr, nullptr, 
                 new Waypoint(node->point->getX() + (obstacle->getRadius() + 1) * unitVectorToNextWaypoint[0], node->point->getY() + (obstacle->getRadius() + 1) * unitVectorToNextWaypoint[1]));
@@ -209,7 +241,10 @@ void NAVnode::waypointCollisionDetected(ListNode* node, Obstacle* obstacle){
                 if (!(sqrt(dx * dx + dy * dy) < obstacle->getRadius())){
                     // if moving back one more radii will NOT make a new waypoint behind the first one, then we add a new waypoint 1 radii back from the last one, else we simply omit it
                     newWaypoint = new ListNode(nullptr, nullptr, 
-                        new Waypoint(node->point->getX() + (obstacle->getRadius() * 2 + 1) * pointOfInterest[2], node->point->getY() + (obstacle->getRadius() * 2+ 1) * pointOfInterest[3]));
+                        new Waypoint(
+                            node->point->getX() + (obstacle->getRadius() * 2 + 1) * unitVectorToNextWaypoint[0],
+                            node->point->getY() + (obstacle->getRadius() * 2 + 1) * unitVectorToNextWaypoint[1]
+                        ));
                     
                     routes[routeToEdit].addBefore(newWaypoint, node);
                 }
@@ -254,8 +289,10 @@ void NAVnode::trackCollisionDetected(ListNode* nextNode, Obstacle* obstacle){
                 if (!(sqrt(dx * dx + dy * dy) < obstacle->getRadius())){
                     // if moving back one more radii will NOT make a new waypoint behind the first one, then we add a new waypoint 1 radii back from the last one, else we simply omit it
                     newWaypoint = new ListNode(nullptr, nullptr, 
-                        new Waypoint(pointOfInterest[0] - (obstacle->getRadius() * 2 + 1) * pointOfInterest[2], pointOfInterest[1] - (obstacle->getRadius() * 2 + 1) * pointOfInterest[3]));
-                    
+                        new Waypoint(
+                            pointOfInterest[0] - (obstacle->getRadius() * 2 + 1) * pointOfInterest[2],
+                            pointOfInterest[1] - (obstacle->getRadius() * 2 + 1) * pointOfInterest[3]
+                        ));
                     routes[routeToEdit].addBefore(newWaypoint, nextNode);
                 }
             }
@@ -271,8 +308,8 @@ void NAVnode::trackCollisionDetected(ListNode* nextNode, Obstacle* obstacle){
                 // we'll try the same thing again, taking care not to go past the previous waypoint
 
                 // check if the previous waypoint is within 1 radii of the waypoint we just made
-                double dx = nextNode->previous->point->getX() - newWaypoint->point->getX();
-                double dy = nextNode->previous->point->getY() - newWaypoint->point->getY();
+                double dx = nextNode->point->getX() - newWaypoint->point->getX();
+                double dy = nextNode->point->getY() - newWaypoint->point->getY();
                 delete newWaypoint;
                 
                 if (!(sqrt(dx * dx + dy * dy) < obstacle->getRadius())){
@@ -286,8 +323,6 @@ void NAVnode::trackCollisionDetected(ListNode* nextNode, Obstacle* obstacle){
             else{
                 routes[routeToEdit].addBefore(newWaypoint, nextNode);
             }
-
-            newWaypoint = nullptr;
         }; break;
         case(automatic_Circumnavigation_Off): cout << "collision Detected with Obstacle (" << obstacle->getX() << ", " << obstacle->getY() << ")" << endl; break;
     };
@@ -298,7 +333,10 @@ void NAVnode::generateDetour(double pointOfInterest_X, double pointOfInterest_Y,
     // define unit vector going from POI to centre
     double dx = obstacle->getX() - pointOfInterest_X;
     double dy = obstacle->getY() - pointOfInterest_Y;
-    double length = sqrt(dx * dx + dy * dy);
+    double length = std::sqrt(dx * dx + dy * dy);
+    if (length < 1e-9) {
+    return;
+    }
     double* unitVector = new double[2]{dx / length, dy / length}; // only has two places at index 0 and 1
 
     // following obstacles are used in the worst case scenario of chaining obstacles
@@ -373,9 +411,23 @@ void NAVnode::generateDetour(double pointOfInterest_X, double pointOfInterest_Y,
                         the waypoint that takes us the least off track will be added and the other will be removed
                     */
                     int originalObstacleIndex = getIndexOfObstacle(obstacle);
+                    if (originalObstacleIndex < 0 ||
+                        obstacle1_index < 0 ||
+                        obstacle2_index < 0) {
+                        delete newWaypoint;
+                        delete[] unitVector;
+                        return;
+                    }
+
                     Waypoint* alternative1 = findAlternateRoute(originalObstacleIndex, obstacle1_index);
                     Waypoint* alternative2 = findAlternateRoute(originalObstacleIndex, obstacle2_index);
                     delete newWaypoint;
+                    if (alternative1 == nullptr || alternative2 == nullptr) {
+                        delete alternative1;
+                        delete alternative2;
+                        delete[] unitVector;
+                        return;
+                    }
                         
                     // calculate the distance to alternative 1
                     dx = alternative1->getX() - pointOfInterest_X;
@@ -410,11 +462,20 @@ void NAVnode::generateDetour(double pointOfInterest_X, double pointOfInterest_Y,
     delete[] unitVector;
 }
 
-Waypoint* NAVnode::findAlternateRoute(int first, int second){
+Waypoint* NAVnode::findAlternateRoute(int first, int second, int depth){
+    if (depth > 16 || depth > obstacleCount) {
+        return nullptr;
+    }
+    if (first < 0 || second < 0 || first >= obstacleCount || second >= obstacleCount) {
+        return nullptr;
+    }
     // define unit vector going from the centre of the original obstacle to the next one
     double dx = obstacles[second]->getX() - obstacles[first]->getX();
     double dy = obstacles[second]->getY() - obstacles[first]->getY();
     double length = sqrt(dx * dx + dy * dy);
+    if (length < 1e-9) {
+        return nullptr;
+    }
     double* unitVector = new double[2]{dx / length, dy / length};
 
     Waypoint* possibleWaypoint = new Waypoint(obstacles[second]->getX() + (obstacles[second]->getRadius() + 1) * unitVector[0], obstacles[second]->getY() + (obstacles[second]->getRadius() + 1) * unitVector[1]);
@@ -440,7 +501,12 @@ Waypoint* NAVnode::findAlternateRoute(int first, int second){
             delete[] unitVector;
             int indexOfNextObstacle = findWaypointCollision(possibleWaypoint);
             delete possibleWaypoint;
-            return findAlternateRoute(second, indexOfNextObstacle);
+
+            if (indexOfNextObstacle < 0 || indexOfNextObstacle >= obstacleCount || indexOfNextObstacle == second) {
+                return nullptr;
+            }
+
+            return findAlternateRoute(second, indexOfNextObstacle, depth + 1);
         }
     }
 }
@@ -452,12 +518,37 @@ array<double, 4> NAVnode::calculatePointOfInterest(ListNode* start, ListNode* en
     double* vectorToNextWaypoint = new double[2]{end->point->getX() - start->point->getX(), end->point->getY() - start->point->getY()};
     double* vectorToObstacle = new double[2]{obstacle->getX() - start->point->getX(), obstacle->getY() - start->point->getY()};
 
+    double segmentLength = std::sqrt(
+    vectorToNextWaypoint[0] * vectorToNextWaypoint[0] +
+    vectorToNextWaypoint[1] * vectorToNextWaypoint[1]
+        );
+
+    if (segmentLength < 1e-9) {
+        delete[] vectorToNextWaypoint;
+        delete[] vectorToObstacle;
+
+        return {
+            start->point->getX(),
+            start->point->getY(),
+            0.0,
+            0.0
+        };
+    }
     // calculate unit vector representing the direction of the route
-    double* unitVectorToNextWaypoint = new double [2]{vectorToNextWaypoint[0] / sqrt(vectorToNextWaypoint[0]*vectorToNextWaypoint[0] + vectorToNextWaypoint[1]*vectorToNextWaypoint[1]), 
-                                        vectorToNextWaypoint[1] / sqrt(vectorToNextWaypoint[0]*vectorToNextWaypoint[0] + vectorToNextWaypoint[1]*vectorToNextWaypoint[1])};
-        
+    double* unitVectorToNextWaypoint = new double[2]{
+    vectorToNextWaypoint[0] / segmentLength,
+    vectorToNextWaypoint[1] / segmentLength
+        };  
     // project one vector onto the other to find out how far along the route the POI is
-    double projectionLength = vectorToObstacle[0] * unitVectorToNextWaypoint[0] + vectorToObstacle[1] * unitVectorToNextWaypoint[1];
+    double projectionLength =
+        vectorToObstacle[0] * unitVectorToNextWaypoint[0] +
+        vectorToObstacle[1] * unitVectorToNextWaypoint[1];
+
+    projectionLength = std::clamp(
+        projectionLength,
+        0.0,
+        segmentLength
+    );
         
     // use the projection length and the direction to get the coordinates of the POI
     x = start->point->getX() + projectionLength * unitVectorToNextWaypoint[0];
@@ -526,48 +617,42 @@ std::string NAVnode::getCircumnavigationStyleName(){
     return name;
 }
 
-bool NAVnode::removeLocalObstacle_helper(int x, int y){
+static bool eraseObstacleAt(Obstacle** obstacles, int& obstacleCount, int index) {
+    if (index < 0 || index >= obstacleCount) return false;
+    if (index != obstacleCount - 1) {
+        Obstacle* temp = obstacles[index];
+        obstacles[index] = obstacles[obstacleCount - 1];
+        obstacles[obstacleCount - 1] = temp;
+    }
+    delete obstacles[--obstacleCount];
+    obstacles[obstacleCount] = nullptr;
+    return true;
+}
+
+bool NAVnode::removeLocalObstacle_helper(double x, double y){
     for(int i = 0; i < obstacleCount; i++){
-        if ((obstacles[i]->getX() == x) && (obstacles[i]->getY() == y)){
-            // swap with last valid element (index obstacleCount-1) if not already last
-            if (i != obstacleCount - 1){
-                Obstacle* temp = obstacles[i];
-                obstacles[i] = obstacles[obstacleCount - 1];
-                obstacles[obstacleCount - 1] = temp;
-            }
-            // delete last element and decrement count
-            delete obstacles[--obstacleCount];
-            return true;
+        if (std::abs(obstacles[i]->getX() - x) < 1e-6 && std::abs(obstacles[i]->getY() - y) < 1e-6){
+            return eraseObstacleAt(obstacles, obstacleCount, i);
         }
     }
     return false;
 }
 
-bool NAVnode::removeGeodeticObstacle_helper(int latitude, int longitude){
+bool NAVnode::removeGeodeticObstacle_helper(double latitude, double longitude){
     for(int i = 0; i < obstacleCount; i++){
-        if ((obstacles[i]->getLatitude() == latitude) && (obstacles[i]->getLongitude() == longitude)){
-            if (i != obstacleCount - 1){
-                Obstacle* temp = obstacles[i];
-                obstacles[i] = obstacles[obstacleCount - 1];
-                obstacles[obstacleCount - 1] = temp;
-            }
-            delete obstacles[--obstacleCount];
-            return true;
+        if (std::abs(obstacles[i]->getLatitude() - latitude) < 1e-6 && std::abs(obstacles[i]->getLongitude() - longitude) < 1e-6){
+            return eraseObstacleAt(obstacles, obstacleCount, i);
         }
     }
     return false;
 }
 
-bool NAVnode::removeEarthCentredObstacle_helper(int x, int y, int z){
+bool NAVnode::removeEarthCentredObstacle_helper(double x, double y, double z){
     for(int i = 0; i < obstacleCount; i++){
-        if ((obstacles[i]->getECEF_x() == x) && (obstacles[i]->getECEF_y() == y) && (obstacles[i]->getECEF_z() == z)){
-            if (i != obstacleCount - 1){
-                Obstacle* temp = obstacles[i];
-                obstacles[i] = obstacles[obstacleCount - 1];
-                obstacles[obstacleCount - 1] = temp;
-            }
-            delete obstacles[--obstacleCount];
-            return true;
+        if (std::abs(obstacles[i]->getECEF_x() - x) < 1e-6 &&
+            std::abs(obstacles[i]->getECEF_y() - y) < 1e-6 &&
+            std::abs(obstacles[i]->getECEF_z() - z) < 1e-6){
+            return eraseObstacleAt(obstacles, obstacleCount, i);
         }
     }
     return false;
@@ -579,7 +664,8 @@ NAVnode::NAVnode() : Node("NAVnode"), count_(0) {
     currentPosition = new Waypoint(0.0, 0.0);
 
     debug = false;
-    travellingForwards = false;
+    travellingForwards = true;   // the target starts at the head of the route, so travel towards the tail
+    routeFinished = false;
         
     obstacleCount = 0;
     obstacleLimit = 10;
@@ -596,7 +682,7 @@ NAVnode::NAVnode() : Node("NAVnode"), count_(0) {
     }
 
     for (int i = 0; i < 5; i++) {
-        lastFiveWaypoints[i] = currentPosition;
+        lastFiveWaypoints[i] = new Waypoint(currentPosition->getX(), currentPosition->getY());
     }
         
     preference = local;
@@ -609,11 +695,18 @@ NAVnode::NAVnode() : Node("NAVnode"), count_(0) {
 
     std::string gnss_port = this->declare_parameter<std::string>("gnss_port", "/dev/ttyUSB0");
     int gnss_baud = this->declare_parameter<int>("gnss_baudrate", 38400);
+    verify_nmea_checksum_ = this->declare_parameter<bool>("verify_nmea_checksum", true);
+    use_gps_fix_topic_ = this->declare_parameter<bool>("use_gps_fix_topic", false);
+    std::string gps_fix_topic = this->declare_parameter<std::string>("gps_fix_topic", "/gps/fix");
 
-    // initialize serial port using the parameter
-    GNSS = new SerialPort(SerialPort::stringToCharacterArray(gnss_port.c_str()), gnss_baud);
-    //GNSS = new DummyGPS();
-    GNSS->begin();
+    GNSS = nullptr;
+    if (use_gps_fix_topic_) {
+        gps_fix_sub_ = this->create_subscription<sensor_msgs::msg::NavSatFix>(
+            gps_fix_topic, 10, std::bind(&NAVnode::gpsFixCallback, this, _1));
+    } else {
+        GNSS = new SerialPort(gnss_port, gnss_baud);
+        GNSS->begin();
+    }
 
     // create topics
     // here, we're using a queue size of 1 because it is more desireable to lose some data
@@ -623,8 +716,8 @@ NAVnode::NAVnode() : Node("NAVnode"), count_(0) {
 
     // create services
     StopNavigatingServer      = this->create_service<VoidService>("StopNavigating", std::bind(&NAVnode::stopNavigating, this, _1, _2));
-    SelectRouteToFollowServer = this->create_service<SelectRoute>("SelectRoute",    std::bind(&NAVnode::selectRouteToFollow, this, _1, _2));
-    SelectRouteToEditServer   = this->create_service<SelectRoute>("SelectRoute",    std::bind(&NAVnode::selectRouteToEdit, this, _1, _2));
+    SelectRouteToFollowServer = this->create_service<SelectRoute>("SelectRouteToFollow", std::bind(&NAVnode::selectRouteToFollow, this, _1, _2));
+    SelectRouteToEditServer   = this->create_service<SelectRoute>("SelectRouteToEdit", std::bind(&NAVnode::selectRouteToEdit, this, _1, _2));
     ResetHomeServer           = this->create_service<ResetHome>  ("ResetHome",      std::bind(&NAVnode::resetHome, this, _1, _2));
     ClearRouteServer          = this->create_service<VoidService>("ClearRoute",     std::bind(&NAVnode::clearRoute, this, _1, _2));
         
@@ -702,8 +795,8 @@ NAVnode::~NAVnode() {
                     ex: Waypoint 7: (5, 7) {5013.21201 N, 11913.15950 W}
                 */
                 outputFile << "Waypoint " << ++count << ": "
-                           << "(" << currentPosition->getX() << ", " << currentPosition->getY() << ") "
-                           << "{" << currentPosition->getLatitude() << " N, " << currentPosition->getLongitude() << " W}";
+                           << "(" << current->point->getX() << ", " << current->point->getY() << ") "
+                           << "{" << current->point->getLatitude() << " N, " << current->point->getLongitude() << " W}\n";   // was currentPosition for every line
                 
                 current = current->next;
             }
@@ -717,8 +810,8 @@ NAVnode::~NAVnode() {
                     ex: Waypoint 7: (5, 7) {5013.21201 N, 11913.15950 W}
                 */
                 cout << "Waypoint " << ++count << ": "
-                     << "(" << currentPosition->getX() << ", " << currentPosition->getY() << ") "
-                     << "{" << currentPosition->getLatitude() << " N, " << currentPosition->getLongitude() << " W}";
+                     << "(" << current->point->getX() << ", " << current->point->getY() << ") "
+                     << "{" << current->point->getLatitude() << " N, " << current->point->getLongitude() << " W}\n";   // was currentPosition for every line
 
                 current = current->next;
             }
@@ -728,10 +821,44 @@ NAVnode::~NAVnode() {
     }
 
     cout << "number of waypoints visited: " << count << endl;
+
+    delete GNSS;
+    GNSS = nullptr;
+    delete currentPosition;
+    currentPosition = nullptr;
+    for (int i = 0; i < 5; ++i) {
+        delete lastFiveWaypoints[i];
+        lastFiveWaypoints[i] = nullptr;
+    }
+    if (obstacles != nullptr) {
+        for (int i = 0; i < obstacleCount; ++i) {
+            delete obstacles[i];
+            obstacles[i] = nullptr;
+        }
+        delete[] obstacles;
+        obstacles = nullptr;
+    }
 }
 
     // timers
+void NAVnode::validateTarget(){
+    ListNode* node = routes[routeToFollow].getHead();
+    if (nextWaypoint != nullptr) {
+        // pointer comparison only: the node may already have been deleted by a remove/clear service
+        for (ListNode* n = node; n != nullptr; n = n->next) {
+            if (n == nextWaypoint) return;
+        }
+        nextWaypoint = nullptr;
+    }
+    if (!routeFinished) {
+        nextWaypoint = travellingForwards ? routes[routeToFollow].getHead() : routes[routeToFollow].getTail();
+    }
+}
+
 void NAVnode::mainTimer(){
+    // nextWaypoint used to be set once, in the constructor, while every route was still empty, so no
+    // waypoint added later was ever targeted; a removed waypoint also left it dangling.
+    validateTarget();
     updatePositonData();
 
     if (currentPosition == nullptr) {
@@ -750,13 +877,15 @@ void NAVnode::mainTimer(){
                 nextWaypoint = nextWaypoint->next;
             else
                 nextWaypoint = nextWaypoint->previous;
+            if (nextWaypoint == nullptr) routeFinished = true;   // do not start the route again by itself
         }
     }
+    updateFollowRouteGoal();
 
     if (debug){
         // debug mode will print the current value for all our variables to the ros terminal thatt the navigation node is active in
         
-        printf("Current coordinates: %f N %f W \n", currentPosition->getLatitude(), currentPosition->getLatitude());
+        printf("Current coordinates: %f N %f W \n", currentPosition->getLatitude(), currentPosition->getLongitude());
         printf("Route to Follow: %s Route to Edit: %s Coordinate Preference: %s Circumnavigation style: %s \n", getRouteToFollowName().c_str(), getRouteToEditName().c_str(), getPreferenceName().c_str(), getCircumnavigationStyleName().c_str());
         printf("Number of Waypoints: %d Number of Obstacles: %d Current Maximun number of obstacles: %d \n\n\n", waypointCount, obstacleCount, obstacleLimit);
     }
@@ -772,7 +901,9 @@ void NAVnode::mainTimer(){
         this is plenty of detail, and not so much data that it becomes unmanageable
     */
     if(++cyclesSinceLogUpdated >= 100 && pointsLogged < 250){
-        pointsVisited.add(currentPosition);
+        // store a copy: currentPosition is deleted and replaced every tick, and ListNode deletes its point,
+        // so adding the pointer itself left dangling pointers and a double free at shutdown
+        pointsVisited.add(new Waypoint(*currentPosition));
         pointsLogged += 1;
         cyclesSinceLogUpdated = 0;
     }
@@ -780,108 +911,114 @@ void NAVnode::mainTimer(){
    
 }
 
-void NAVnode::updatePositonData(){
-    string message = GNSS->read();
-
-    auto gnssInformation = navigation_interfaces::msg::DisplayInfo();
-
-    double latitude = 0.0;
-    double longitude = 0.0;
-    double altitude = 0.0;
-
-    double heading = 0.0;
-    double speed = 0.0;
-
-    int start = 0;
-
-    try {
-        // extract position and velocity data
-        /*
-            The GNSS data is formatted as an NMEA 0183 string
-            to get what we need, we are going to search for the commas that separate the different sections of the string
-
-            example string that contains the position of the Rover:
-            $GNGGA, UTCtime, Latitude, N, longitude, W, Quality, #ofSVs, HDOP, altitude, M, GeoidSeparation, M, age ID*checksum
-
-            example string that contains the position, heading and speed of the Rover:
-            $GPRMC, UTCtime, status, Latitude, N, longitude, W, speed(kts), TrueTrack, Date, MagneticDeclination, checksum
-
-            the following code will extract the values we need and will work anywhere in North America
-            If DaVE is to travel accross the pond, modify the code
-        */
-
-        start = message.find("RMC", 0); // locate the section of the string with the RMC message
-        if (start != string::npos){ // if it exists, extract the data
-
-            start += 4; // get past the $GPRMC, section
-            start = message.find("A,", start); // locate start of Latitude section
-
-            if (start != string::npos){ // if statement ensures the status is not void
-                latitude = stoi(message.substr(++start, 10));
-
-                start = message.find("N,", start); // find start of longitude section
-                longitude = stoi(message.substr(++start, 10));
-
-                start = message.find(",", start); // find the start of the speed section
-                speed = stoi(message.substr(++start, 5)) * 1.852; // multiply by 1.852 to convert from knots to km/h
-
-                start = message.find(",", start); // find the start of the heading section
-                if (nextWaypoint) {
-                    heading = nextWaypoint->point->degToRad(stoi(message.substr(++start, 6)));
-                } else {
-                    heading = 0.0;
-                }
-
-                if(!date.empty()){
-                    start = message.find(",", start);
-                    date = message.substr(++start, 2) + "/" + message.substr(start + 2, 2) + "/" + message.substr(start + 4, 2);
-                }
+void NAVnode::gpsFixCallback(const sensor_msgs::msg::NavSatFix::SharedPtr msg){
+    if (msg->status.status < 0 || !std::isfinite(msg->latitude) || !std::isfinite(msg->longitude)) {
+        return;
+    }
+    if (std::abs(msg->latitude) < 1e-4 && std::abs(msg->longitude) < 1e-4) {
+        return;
+    }
+    const double alt = std::isfinite(msg->altitude) ? msg->altitude : 0.0;
+    Waypoint* updated = new Waypoint(msg->longitude, msg->latitude, alt, true);
+    const int64_t stamp_ns = static_cast<int64_t>(msg->header.stamp.sec) * 1000000000LL
+                           + static_cast<int64_t>(msg->header.stamp.nanosec);
+    if (have_prev_fix_ && Waypoint::isHomeSet() && stamp_ns > prev_fix_ns_) {
+        const double dt_s = static_cast<double>(stamp_ns - prev_fix_ns_) * 1e-9;
+        const double dx = updated->getX() - prev_fix_x_;
+        const double dy = updated->getY() - prev_fix_y_;
+        const double dist = std::hypot(dx, dy);
+        if (dt_s > 0.05) {
+            lastSpeed = (dist / dt_s) * 3.6;  // km/h
+            if (dist > 0.05) {
+                double h = std::atan2(dx, dy);
+                if (h < 0.0) h += 2.0 * Waypoint::pi;
+                lastHeading = h;
             }
-        }
-        else {
-            start = message.find("GGA", 0); // locate the section of the string with the GGA message
-            
-            if (start != string::npos){ // if it exists, extract the data
-
-                start += 4; // get past the $GNGGA, section
-                start = message.find(",", start); // find the start of the latitude section
-                latitude = stoi(message.substr(++start, 10));
-
-                start = message.find("N,", start) + 1; // find the start of the longitude section
-                longitude = -stoi(message.substr(++start, 10));
-
-                start = message.find("W,", start) + 1; // start of the Quality section
-                start = message.find(",", ++start);  // start of the SV count section
-                start = message.find(",", ++start);  // start of the HDOP section
-                start = message.find(",", ++start);  // start of the altitude section
-                altitude = stoi(message.substr(++start, 10));
-            }
-
-            start = message.find("VTG", 0); // locate the section of the string with the track information
-
-            if(start != string::npos){ // if it exists, extract the data
-
-                start += 4; // get past the $GPVTG, section
-                if (nextWaypoint) {
-                    heading = nextWaypoint->point->degToRad(stoi(message.substr(start, 6)));
-                } else {
-                    heading = 0.0;
-                }
-
-                start = message.find("N,", start) + 1; // locate the section with speed in km/h
-                speed = stoi(message.substr(++start, 5));
-            }
-            
         }
     }
-    catch (...) { /* If we don't look directly at it, it's as if the error never happened...*/ return; }
+    if (Waypoint::isHomeSet()) {
+        prev_fix_x_ = updated->getX();
+        prev_fix_y_ = updated->getY();
+        prev_fix_ns_ = stamp_ns;
+        have_prev_fix_ = true;
+    }
+    hasFix = true;
+    delete currentPosition;
+    currentPosition = updated;
+}
 
-    if (currentPosition != nullptr && latitude > 0.0 && longitude > 0.0) {
-        delete currentPosition;
-        currentPosition = new Waypoint(latitude,longitude, altitude, true);
+void NAVnode::updatePositonData(){
+    double heading = lastHeading;
+    double speed = lastSpeed;
+
+    if (GNSS != nullptr) {
+        // Drain up to 16 buffered chunks so a burst of NMEA sentences settles within one tick.
+        for (int reads = 0; reads < 16; ++reads) {
+            std::string chunk = GNSS->read();
+            if (chunk.empty()) break;
+            gnssBuffer += chunk;
+        }
+        if (gnssBuffer.size() > 4096) gnssBuffer.erase(0, gnssBuffer.size() - 4096);
+        string message = gnssBuffer;
+        size_t lastLineEnd = gnssBuffer.find_last_of('\n');
+        if (lastLineEnd != std::string::npos) gnssBuffer.erase(0, lastLineEnd + 1);   // keep only the unfinished sentence
+
+        double latitude = 0.0;
+        double longitude = 0.0;
+        double altitude = 0.0;
+
+        bool havePosition = false;
+        try {
+            std::vector<std::string> rmc = nmeaFields(message, "RMC", verify_nmea_checksum_);
+            std::vector<std::string> gga = nmeaFields(message, "GGA", verify_nmea_checksum_);
+            std::vector<std::string> vtg = nmeaFields(message, "VTG", verify_nmea_checksum_);
+
+            // RMC: 1 time, 2 status, 3 latitude, 4 N/S, 5 longitude, 6 E/W, 7 speed (knots), 8 true track (deg), 9 date
+            if (rmc.size() > 9 && rmc[2] == "A" && !rmc[3].empty() && !rmc[5].empty()) {
+                latitude = nmeaToDegrees(stod(rmc[3]));
+                if (rmc[4] == "S") latitude = -latitude;
+                longitude = nmeaToDegrees(stod(rmc[5]));
+                if (rmc[6] == "W") longitude = -longitude;
+                havePosition = true;
+                if (!rmc[7].empty()) speed = stod(rmc[7]) * 1.852;                     // knots to km/h
+                if (!rmc[8].empty()) heading = stod(rmc[8]) * Waypoint::pi / 180.0;    // course over ground
+                if (date.empty() && rmc[9].size() >= 6)                                 // ddmmyy, used in the log file name
+                    date = rmc[9].substr(0, 2) + "-" + rmc[9].substr(2, 2) + "-" + rmc[9].substr(4, 2);
+            }
+
+            // GGA: 2 latitude, 3 N/S, 4 longitude, 5 E/W, 6 fix quality, 9 altitude (m)
+            if (gga.size() > 9 && !gga[6].empty() && nav_nmea::isAcceptableGgaQuality(std::stoi(gga[6])) &&
+                !gga[2].empty() && !gga[4].empty()) {
+                latitude = nmeaToDegrees(stod(gga[2]));
+                if (gga[3] == "S") latitude = -latitude;
+                longitude = nmeaToDegrees(stod(gga[4]));
+                if (gga[5] == "W") longitude = -longitude;
+                if (!gga[9].empty()) altitude = stod(gga[9]);
+                havePosition = true;
+            }
+
+            // VTG: 1 true track (deg), 7 speed (km/h); only used when RMC did not give them
+            if (rmc.empty() && vtg.size() > 7) {
+                if (!vtg[1].empty()) heading = stod(vtg[1]) * Waypoint::pi / 180.0;
+                if (!vtg[7].empty()) speed = stod(vtg[7]);
+            }
+        }
+        catch (...) { return; }   // a malformed number: skip this cycle rather than publish a wrong position
+        lastSpeed = speed;
+        lastHeading = heading;
+
+        if (currentPosition != nullptr && havePosition && latitude != 0.0 && longitude != 0.0) {
+            hasFix = true;
+            delete currentPosition;
+            currentPosition = new Waypoint(longitude, latitude, altitude, true); // constructor order is (longitude, latitude, altitude)
+        } else if (currentPosition == nullptr) {
+            currentPosition = new Waypoint(0.0, 0.0);
+        }
     } else if (currentPosition == nullptr) {
         currentPosition = new Waypoint(0.0, 0.0);
     }
+
+    auto gnssInformation = navigation_interfaces::msg::DisplayInfo();
 
     gnssInformation.heading = heading;
     gnssInformation.speed = speed;
@@ -911,18 +1048,10 @@ void NAVnode::updatePositonData(){
             dx = 0.0; dy = 0.0;
         }
 
-        if(dx != 0) {
-            double angle = std::asin(dy / dx);
-
-            if (dx > 0 && dy >= 0)      gnssInformation.bearing2waypoint = Waypoint::pi / 2 - angle;
-            else if (dx < 0 && dy >= 0) gnssInformation.bearing2waypoint = Waypoint::pi * 3 / 2 + angle;
-            else if (dx < 0 && dy < 0)  gnssInformation.bearing2waypoint = Waypoint::pi * 3 / 2 - angle;
-            else if (dx > 0 && dy < 0)  gnssInformation.bearing2waypoint = Waypoint::pi / 2 + angle;
-        }
-        else if (dy > 0)
-            gnssInformation.bearing2waypoint = 0;
-        else 
-            gnssInformation.bearing2waypoint = Waypoint::pi;
+        // compass bearing to the waypoint: radians clockwise from north (+y), in [0, 2*pi)
+        double bearing = std::atan2(dx, dy);
+        if (bearing < 0.0) bearing += 2.0 * Waypoint::pi;
+        gnssInformation.bearing2waypoint = bearing;
     } else {
         gnssInformation.waypoint_local_x = 0.0;
         gnssInformation.waypoint_local_y = 0.0;
@@ -1048,6 +1177,8 @@ void NAVnode::toggleRouteToFollow(const std::shared_ptr<VoidService::Request> re
         case(Route4): routeToFollow = Route5; break;
         default: routeToFollow = Route1;      break;
     }
+    routeFinished = false;
+    nextWaypoint = nullptr;   // validateTarget() picks the new route's first waypoint
 }
 
 void NAVnode::toggleRouteToEdit(const std::shared_ptr<VoidService::Request> request, 
@@ -1067,6 +1198,7 @@ void NAVnode::toggleDebug(const std::shared_ptr<VoidService::Request> request, s
 
 void NAVnode::toggleDirection(const std::shared_ptr<VoidService::Request> request, std::shared_ptr<VoidService::Response> response){
     travellingForwards = !travellingForwards;
+    routeFinished = false;
 }
 
 void NAVnode::toggleCircumnavigationStyle(const std::shared_ptr<VoidService::Request> request, std::shared_ptr<VoidService::Response> response){
@@ -1078,7 +1210,11 @@ void NAVnode::toggleCircumnavigationStyle(const std::shared_ptr<VoidService::Req
 }
 
 void NAVnode::targetNextWaypoint(const std::shared_ptr<VoidService::Request> request, std::shared_ptr<VoidService::Response> response){
+    (void)request;
+    (void)response;
+    validateTarget();
     if (nextWaypoint == nullptr) {
+        routeFinished = true;
         return;
     }
 
@@ -1086,10 +1222,15 @@ void NAVnode::targetNextWaypoint(const std::shared_ptr<VoidService::Request> req
         nextWaypoint = nextWaypoint->next;
     else
         nextWaypoint = nextWaypoint->previous;
+    routeFinished = (nextWaypoint == nullptr);
 }
 
 void NAVnode::targetPreviousWaypoint(const std::shared_ptr<VoidService::Request> request, std::shared_ptr<VoidService::Response> response){
+    (void)request;
+    (void)response;
+    validateTarget();
     if (nextWaypoint == nullptr) {
+        routeFinished = true;
         return;
     }
 
@@ -1097,6 +1238,7 @@ void NAVnode::targetPreviousWaypoint(const std::shared_ptr<VoidService::Request>
         nextWaypoint = nextWaypoint->previous;
     else 
         nextWaypoint = nextWaypoint->next;
+    routeFinished = (nextWaypoint == nullptr);
 }
 
 void NAVnode::selectRouteToFollow(const std::shared_ptr<SelectRoute::Request> request, std::shared_ptr<SelectRoute::Response> response){
@@ -1107,9 +1249,10 @@ void NAVnode::selectRouteToFollow(const std::shared_ptr<SelectRoute::Request> re
         case Route4: routeToFollow = Route4; break;
         case Route5: routeToFollow = Route5; break;
         default: {response->output = "Error: invalid Route selection"; return;}
-
-        response->output = "Route successfully changed";
     }
+    response->output = "Route successfully changed";   // was inside the switch after the default case, so never ran
+    routeFinished = false;
+    nextWaypoint = nullptr;   // validateTarget() picks the new route's first waypoint
 }
 
 void NAVnode::selectRouteToEdit(const std::shared_ptr<SelectRoute::Request> request, std::shared_ptr<SelectRoute::Response> response){
@@ -1120,35 +1263,79 @@ void NAVnode::selectRouteToEdit(const std::shared_ptr<SelectRoute::Request> requ
         case Route4: routeToEdit = Route4; break;
         case Route5: routeToEdit = Route5; break;
         default: {response->output = "Error: invalid Route selection"; return;}
+    }
+    response->output = "Route successfully changed";
+}
 
-        response->output = "Route successfully changed";
+void NAVnode::rebaseWaypointsToHome(){
+    if (currentPosition != nullptr) {
+        currentPosition->EarthCentred_To_Local();
+    }
+    for (int i = 0; i < 5; ++i) {
+        if (lastFiveWaypoints[i] != nullptr) {
+            lastFiveWaypoints[i]->EarthCentred_To_Local();
+        }
+        for (ListNode* n = routes[i].getHead(); n != nullptr; n = n->next) {
+            if (n->point != nullptr) {
+                n->point->EarthCentred_To_Local();
+            }
+        }
+    }
+    for (ListNode* n = pointsVisited.getHead(); n != nullptr; n = n->next) {
+        if (n->point != nullptr) {
+            n->point->EarthCentred_To_Local();
+        }
+    }
+    for (int i = 0; i < obstacleCount; ++i) {
+        if (obstacles[i] != nullptr) {
+            obstacles[i]->rebaseToHome();
+        }
     }
 }
 
 void NAVnode::resetHome(const std::shared_ptr<ResetHome::Request> request, std::shared_ptr<ResetHome::Response> response){
-    Waypoint* point = new Waypoint(request->latitude, request->longitude, 0, true);
+    Waypoint* point = new Waypoint(request->longitude, request->latitude, 0, true); // constructor order is (longitude, latitude, altitude)
 
-    if(point->setHome(point, request->password))
+    if(point->setHome(point, request->password)) {
+        rebaseWaypointsToHome();
         response->success = true;
-    else
+    } else {
         response->success = false;
+    }
 
     delete point;
 }
 
+bool NAVnode::ensureHome(){
+    // Local coordinates are relative to home. The add services used to set home silently to the current
+    // position whenever it was unset, even before any fix (home then became a meaningless point).
+    if (Waypoint::isHomeSet()) return true;
+    if (!hasFix || currentPosition == nullptr) {
+        RCLCPP_ERROR(this->get_logger(), "Home is not set and there is no GNSS fix yet: request ignored. "
+                                         "Call ResetHome first, or wait for a fix.");
+        return false;
+    }
+    currentPosition->setHome(currentPosition, 0);
+    RCLCPP_WARN(this->get_logger(), "Home was not set: it is now the current position (lat %.7f, lon %.7f). "
+                                    "Call ResetHome to choose it explicitly.",
+                currentPosition->getLatitude(), currentPosition->getLongitude());
+    return true;
+}
+
 void NAVnode::clearRoute(const std::shared_ptr<VoidService::Request> request, std::shared_ptr<VoidService::Response> response){
     routes[routeToEdit].clear();
+    if (routeToEdit == routeToFollow) { nextWaypoint = nullptr; routeFinished = false; }
 }
 
 void NAVnode::addLocalWaypoint(const std::shared_ptr<AddLocalWaypoint::Request> request, 
                                 std::shared_ptr<AddLocalWaypoint::Response> response){
-    currentPosition->setHome(currentPosition, 0); // ensure home is set
+    if (!ensureHome()) return;   // was a silent setHome(currentPosition), even with no fix
     routes[routeToEdit].add(new Waypoint(request->x, request->y));
 }
 
 void NAVnode::addLocalWaypointAtIndex(const std::shared_ptr<AddLocalWaypointAtIndex::Request> request, 
                                         std::shared_ptr<AddLocalWaypointAtIndex::Response> response){
-    currentPosition->setHome(currentPosition, 0); // ensure home is set
+    if (!ensureHome()) return;   // was a silent setHome(currentPosition), even with no fix
     routes[routeToEdit].add(new Waypoint(request->x, request->y), request->index);
 }
 
@@ -1156,7 +1343,7 @@ void NAVnode::addLocalObstacle(const std::shared_ptr<AddLocalObstacle::Request> 
                                 std::shared_ptr<AddLocalObstacle::Response> response){
     (void)response;
 
-    currentPosition->setHome(currentPosition, 0); // ensure home is set
+    if (!ensureHome()) return;   // was a silent setHome(currentPosition), even with no fix
 
     // check if the array of obstacles is full
     if (obstacleCount == obstacleLimit){
@@ -1189,13 +1376,13 @@ void NAVnode::addLocalObstacle(const std::shared_ptr<AddLocalObstacle::Request> 
 
 void NAVnode::addGeodeticWaypoint(const std::shared_ptr<AddGeodeticWaypoint::Request> request, 
                                     std::shared_ptr<AddGeodeticWaypoint::Response> response){
-    currentPosition->setHome(currentPosition, 0); // ensure home is set
+    if (!ensureHome()) return;   // was a silent setHome(currentPosition), even with no fix
     routes[routeToEdit].add(new Waypoint(request->longitude, request->latitude, request->altitude, true));
 }
 
 void NAVnode::addGeodeticWaypointAtIndex(const std::shared_ptr<AddGeodeticWaypointAtIndex::Request> request, 
                                             std::shared_ptr<AddGeodeticWaypointAtIndex::Response> response){
-    currentPosition->setHome(currentPosition, 0); // ensure home is set
+    if (!ensureHome()) return;   // was a silent setHome(currentPosition), even with no fix
     routes[routeToEdit].add(new Waypoint(request->longitude, request->latitude, request->altitude, true), request->index);
 }
 
@@ -1203,7 +1390,7 @@ void NAVnode::addGeodeticObstacle(const std::shared_ptr<AddGeodeticObstacle::Req
                                     request, std::shared_ptr<AddGeodeticObstacle::Response> response){
     (void)response;
 
-    currentPosition->setHome(currentPosition, 0); // ensure home is set
+    if (!ensureHome()) return;   // was a silent setHome(currentPosition), even with no fix
 
     // check if the array of obstacles is full
     if (obstacleCount == obstacleLimit){
@@ -1237,13 +1424,13 @@ void NAVnode::addGeodeticObstacle(const std::shared_ptr<AddGeodeticObstacle::Req
 
 void NAVnode::addEarthCentredWaypoint(const std::shared_ptr<AddEarthCentredWaypoint::Request> request, 
                                         std::shared_ptr<AddEarthCentredWaypoint::Response> response){
-    currentPosition->setHome(currentPosition, 0); // ensure home is set
+    if (!ensureHome()) return;   // was a silent setHome(currentPosition), even with no fix
     routes[routeToEdit].add(new Waypoint(request->x, request->y, request->z, false));
 }
 
 void NAVnode::addEarthCentredWaypointAtIndex(const std::shared_ptr<AddEarthCentredWaypointAtIndex::Request> request, 
                                                 std::shared_ptr<AddEarthCentredWaypointAtIndex::Response> response){
-    currentPosition->setHome(currentPosition, 0); // ensure home is set
+    if (!ensureHome()) return;   // was a silent setHome(currentPosition), even with no fix
     routes[routeToEdit].add(new Waypoint(request->x, request->y, request->z, false), request->index);
 }
 
@@ -1251,7 +1438,7 @@ void NAVnode::addEarthCentredObstacle(const std::shared_ptr<AddEarthCentredObsta
                                         std::shared_ptr<AddEarthCentredObstacle::Response> response){
     (void)response;
 
-    currentPosition->setHome(currentPosition, 0); // ensure home is set
+    if (!ensureHome()) return;   // was a silent setHome(currentPosition), even with no fix
 
     // check if the array of obstacles is full
     if (obstacleCount == obstacleLimit){
@@ -1284,7 +1471,7 @@ void NAVnode::addEarthCentredObstacle(const std::shared_ptr<AddEarthCentredObsta
 }
 
 void NAVnode::removeLocal(const std::shared_ptr<RemoveLocal::Request> request, std::shared_ptr<RemoveLocal::Response> response){
-    if(routes[routeToFollow].removePoint(request->x, request-> y))
+    if(routes[routeToEdit].removePoint(request->x, request-> y))
         response->output = "Waypoint removed successfully";
     else if(removeLocalObstacle_helper(request->x, request->y))
         response->output = "Obstacle removed successfully";
@@ -1293,7 +1480,7 @@ void NAVnode::removeLocal(const std::shared_ptr<RemoveLocal::Request> request, s
 }
 
 void NAVnode::removeLocalWaypoint(const std::shared_ptr<RemoveLocal::Request> request, std::shared_ptr<RemoveLocal::Response> response){
-    if(routes[routeToFollow].removePoint(request->x, request-> y))
+    if(routes[routeToEdit].removePoint(request->x, request-> y))
         response->output = "Waypoint removed successfully";
     else
         response->output = "Waypoint not in Route";
@@ -1307,7 +1494,7 @@ void NAVnode::removeLocalObstacle(const std::shared_ptr<RemoveLocal::Request> re
 }
 
 void NAVnode::removeGeodetic(const std::shared_ptr<RemoveGeodetic::Request> request, std::shared_ptr<RemoveGeodetic::Response> response){
-    if(routes[routeToFollow].removeGeodeticPoint(request->latitude, request-> longitude))
+    if(routes[routeToEdit].removeGeodeticPoint(request->latitude, request-> longitude))
         response->output = "Waypoint removed successfully";
     else if(removeGeodeticObstacle_helper(request->latitude, request-> longitude))
         response->output = "Obstacle removed successfully";
@@ -1316,7 +1503,7 @@ void NAVnode::removeGeodetic(const std::shared_ptr<RemoveGeodetic::Request> requ
 }
 
 void NAVnode::removeGeodeticWaypoint(const std::shared_ptr<RemoveGeodetic::Request> request, std::shared_ptr<RemoveGeodetic::Response> response){
-    if(routes[routeToFollow].removeGeodeticPoint(request->latitude, request-> longitude))
+    if(routes[routeToEdit].removeGeodeticPoint(request->latitude, request-> longitude))
         response->output = "Waypoint removed successfully";
     else
         response->output = "Waypoint not in Route";
@@ -1330,7 +1517,7 @@ void NAVnode::removeGeodeticObstacle(const std::shared_ptr<RemoveGeodetic::Reque
 }
 
 void NAVnode::removeEarthCentred(const std::shared_ptr<RemoveEarthCentred::Request> request, std::shared_ptr<RemoveEarthCentred::Response> response){
-    if(routes[routeToFollow].removeEarthCentredPoint(request->x, request->y, request->z))
+    if(routes[routeToEdit].removeEarthCentredPoint(request->x, request->y, request->z))
         response->output = "Waypoint removed successfully";
     else if(removeEarthCentredObstacle_helper(request->x, request->y, request->z))
         response->output = "Obstacle removed successfully";
@@ -1339,7 +1526,7 @@ void NAVnode::removeEarthCentred(const std::shared_ptr<RemoveEarthCentred::Reque
 }
 
 void NAVnode::removeEarthCentredWaypoint(const std::shared_ptr<RemoveEarthCentred::Request> request, std::shared_ptr<RemoveEarthCentred::Response> response){
-    if(routes[routeToFollow].removeEarthCentredPoint(request->x, request->y, request->z))
+    if(routes[routeToEdit].removeEarthCentredPoint(request->x, request->y, request->z))
         response->output = "Waypoint removed successfully";
     else
         response->output = "Waypoint not in Route";
@@ -1353,12 +1540,12 @@ void NAVnode::removeEarthCentredObstacle(const std::shared_ptr<RemoveEarthCentre
 }
 
 void NAVnode::removeLastWaypoint(const std::shared_ptr<RemoveLast::Request> request, std::shared_ptr<RemoveLast::Response> response){
-    ListNode* temp = routes[routeToFollow].getHead();
+    ListNode* temp = routes[routeToEdit].getHead();   // was routeToFollow: checked one route, removed from another
 
     if(temp == nullptr)
         response->output = "List is already empty";
     else {
-        routes[routeToFollow].removeLast();
+        routes[routeToEdit].removeLast();
         response->output = "Last Waypoint Successfull Removed";
     }
 }
@@ -1373,12 +1560,20 @@ void NAVnode::removeLastObstacle(const std::shared_ptr<RemoveLast::Request> requ
 }
 
 void NAVnode::sendToGNSS(const std::shared_ptr<SendToGNSS::Request> request, std::shared_ptr<SendToGNSS::Response> response){
-    GNSS->write(request->outgoing);
+    (void)response;
+    if (GNSS != nullptr) {
+        GNSS->write(request->outgoing);
+    }
 }
 
 void NAVnode::readFromGNSS(const std::shared_ptr<ReadFromGNSS::Request> request, std::shared_ptr<ReadFromGNSS::Response> response){
-    response->incoming = GNSS->read();
-    cout << response->incoming << '\n';
+    (void)request;
+    if (GNSS != nullptr) {
+        response->incoming = GNSS->read();
+        cout << response->incoming << '\n';
+    } else {
+        response->incoming = "";
+    }
 }
 
 
@@ -1396,63 +1591,59 @@ rclcpp_action::CancelResponse NAVnode::followRoute_Cancel(const std::shared_ptr<
 }
 
 void NAVnode::followRoute_Accepted(const std::shared_ptr<NAVGoalHandle> goal_handle){
-    // this needs to return quickly, lest we block the executor, so we spin up a new thread
-    std::thread{std::bind(&NAVnode::followRoute_Execute, this, _1), goal_handle}.detach();
+    // The goal used to run in a detached thread that read currentPosition (deleted and replaced every
+    // 200 ms by the timer) and route nodes (deletable by the remove services) with no locking. It is now
+    // tracked by mainTimer() on the executor thread, using the same target and arrival logic as the node.
+    // NOTE: the action reports progress only; nothing here drives the rover.
+    if (activeGoal && activeGoal->is_active()) {
+        auto result = std::make_shared<NAVaction::Result>();
+        result->success = "Superseded by a new FollowRoute goal";
+        activeGoal->abort(result);
+    }
+    activeGoal = goal_handle;
+    goalFeedbackTicks = 0;
+    routeFinished = false;
+    nextWaypoint = nullptr;   // validateTarget() starts the followed route from its first waypoint
 }
 
-void NAVnode::followRoute_Execute(const std::shared_ptr<NAVGoalHandle> goal_handle){
-    // actual method that executes the action
-    rclcpp::Rate loop_rate(1);
-    auto feedback = std::make_shared<NAVaction::Feedback>();
+void NAVnode::updateFollowRouteGoal(){
+    if (!activeGoal) return;
+    if (!activeGoal->is_active()) { activeGoal.reset(); return; }
+
     auto result = std::make_shared<NAVaction::Result>();
-
-    ListNode* current = routes[routeToFollow].getHead();
-    int count = 0;
-    const double arrivalThreshold = 1.0; // arrival tolerance in meters
-
-    if (current == nullptr) {
-        feedback->progress = "Route is empty. Standing by at current position.";
-        goal_handle->publish_feedback(feedback);
-        loop_rate.sleep();
+    if (activeGoal->is_canceling()) {
+        result->success = "Navigation Prematurely Terminated";
+        activeGoal->canceled(result);
+        activeGoal.reset();
+        return;
+    }
+    if (routes[routeToFollow].getHead() == nullptr) {
         result->success = "Route is empty. No waypoints to follow.";
-        goal_handle->succeed(result);
+        activeGoal->succeed(result);
+        activeGoal.reset();
+        return;
+    }
+    if (routeFinished) {
+        result->success = "great success";
+        activeGoal->succeed(result);
+        activeGoal.reset();
         return;
     }
 
-    while(current != nullptr && rclcpp::ok()){
-        if (goal_handle->is_canceling()){
-            result->success = "Navigation Prematurely Terminated";
-            goal_handle->canceled(result);
-            return;
-        }
-
-        // calculate the distance from rover's currentPosition to current target waypoint
-        double dx = currentPosition->getX() - current->point->getX();
-        double dy = currentPosition->getY() - current->point->getY();
-        double distance = std::sqrt(dx * dx + dy * dy);
-
-        std::stringstream ss;
-        ss << "Navigating to Waypoint " << (count + 1)
-           << " [Target: (" << current->point->getX() << ", " << current->point->getY() 
+    if (++goalFeedbackTicks % 5 != 0) return;   // feedback at 1 Hz (timer runs at 5 Hz)
+    auto feedback = std::make_shared<NAVaction::Feedback>();
+    std::stringstream ss;
+    if (nextWaypoint != nullptr && nextWaypoint->point != nullptr && currentPosition != nullptr) {
+        double dx = nextWaypoint->point->getX() - currentPosition->getX();
+        double dy = nextWaypoint->point->getY() - currentPosition->getY();
+        ss << "Navigating to waypoint (" << nextWaypoint->point->getX() << ", " << nextWaypoint->point->getY()
            << ") | Current: (" << currentPosition->getX() << ", " << currentPosition->getY()
-           << ") | Dist: " << std::fixed << std::setprecision(2) << distance << "m]";
-        
-        feedback->progress = ss.str();
-        goal_handle->publish_feedback(feedback);
-
-        // advance to next waypoint once within arrival threshold distance
-        if (distance <= arrivalThreshold) {
-            count++;
-            current = current->next;
-        }
-
-        loop_rate.sleep();
+           << ") | Dist: " << std::fixed << std::setprecision(2) << std::sqrt(dx * dx + dy * dy) << " m";
+    } else {
+        ss << "Waiting for a target waypoint";
     }
-
-    if(rclcpp::ok()){
-        result->success = "great success";
-        goal_handle->succeed(result);
-    }
+    feedback->progress = ss.str();
+    activeGoal->publish_feedback(feedback);
 }
 
 //////////////////////////////////////////////////////////////////////////

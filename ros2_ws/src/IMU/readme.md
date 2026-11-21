@@ -88,7 +88,8 @@ Below is the complete list of all topics published by the package, their message
 - `angular_velocity_covariance` ($3 \times 3$ covariance matrix from UKF)
 - `orientation_covariance` ($3 \times 3$ covariance matrix from UKF)
 
-#### 2. `/imu/odometry` (`nav_msgs/msg/Odometry`)
+#### 2. `/imu/odometry` (`nav_msgs/msg/Odometry`), only with `publish_odometry:=true`
+> Off by default: position and velocity are acceleration integrated twice in the body frame and drift without bound. Not for navigation.
 - `pose.pose.position` (Estimated position in meters)
   - `pose.pose.position.x` $\rightarrow$ `ros2 topic echo /imu/odometry --field pose.pose.position.x`
   - `pose.pose.position.y` $\rightarrow$ `ros2 topic echo /imu/odometry --field pose.pose.position.y`
@@ -135,7 +136,7 @@ ros2 service call /imu_kalman_filter/get_state std_srvs/srv/Trigger
 - `i2c_bus` (int, default: `7`)
 - `i2c_address` (int, default: `0x4A`)
 - `publish_rate` (float, default: `20.0` Hz)
-- `sim_mode` (bool, default: `false`)
+- `sim_mode` (bool, default: `false`): `true` publishes synthetic data. With `false`, a missing library or sensor publishes **nothing** (errors are logged and the I²C connection is retried every 2 s); there is no silent fallback to synthetic data.
 - `dt` (float, default: `0.1` s)
 - `process_noise` (float, default: `0.01`)
 - `frame_id` (string, default: `'imu_link'`)

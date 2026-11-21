@@ -60,6 +60,7 @@
 #include "rclcpp/rclcpp.hpp"
 #include "rclcpp_action/rclcpp_action.hpp"
 #include "rclcpp_components/register_node_macro.hpp"
+#include "sensor_msgs/msg/nav_sat_fix.hpp"
 
 
 
@@ -96,6 +97,19 @@ class NAVnode : public rclcpp::Node{
 private:
     bool debug;                 // displays added information to the terminal for debugging purposes (false by default)
     bool travellingForwards;    // boolean to select the direction of travel along selected route 
+    bool routeFinished;         // true once the last waypoint of the followed route has been reached
+    std::string gnssBuffer;     // serial bytes kept across timer ticks, so a sentence split between two reads is not lost
+    double lastSpeed = 0.0;     // km/h, held until the next RMC/VTG sentence
+    double lastHeading = 0.0;   // rad, course over ground, held until the next RMC/VTG sentence
+    bool hasFix = false;        // true once a valid GNSS position has been parsed
+    bool verify_nmea_checksum_ = true;
+    bool use_gps_fix_topic_ = false;
+    bool have_prev_fix_ = false;
+    double prev_fix_x_ = 0.0;
+    double prev_fix_y_ = 0.0;
+    int64_t prev_fix_ns_ = 0;
+    std::shared_ptr<NAVGoalHandle> activeGoal;   // the FollowRoute goal being tracked, if any
+    int goalFeedbackTicks = 0;
 
     int obstacleCount;          // keeps track of how many obstacles are currently stored in the system 
     int obstacleLimit;          // maximum number of obstacles that can be stored in the system
@@ -134,6 +148,7 @@ private:
 
     // Topics
     rclcpp::Publisher<navigation_interfaces::msg::DisplayInfo>::SharedPtr DisplayInfoPublisher;
+    rclcpp::Subscription<sensor_msgs::msg::NavSatFix>::SharedPtr gps_fix_sub_;
 
     // Services
 
@@ -300,7 +315,7 @@ private:
     */
     void generateDetour(double pointOfInterest_X, double pointOfInterest_Y, ListNode* nextNode, Obstacle* obstacle);
 
-    Waypoint* findAlternateRoute(int first, int second);
+    Waypoint* findAlternateRoute(int first, int second, int depth = 0);
 
     /*
         calculatePointOfInterest(ListNode* start, ListNode* end, Obstacle* obstacle)
@@ -333,11 +348,15 @@ private:
 
     std::string getCircumnavigationStyleName();
 
-    bool removeLocalObstacle_helper(int x, int y);
+    bool removeLocalObstacle_helper(double x, double y);
 
-    bool removeGeodeticObstacle_helper(int latitude, int longitude);
+    bool removeGeodeticObstacle_helper(double latitude, double longitude);
 
-    bool removeEarthCentredObstacle_helper(int x, int y, int z);
+    bool removeEarthCentredObstacle_helper(double x, double y, double z);
+
+    void gpsFixCallback(const sensor_msgs::msg::NavSatFix::SharedPtr msg);
+
+    void rebaseWaypointsToHome();
 
     // Constructor
 
@@ -349,6 +368,14 @@ private:
 
     // timers
     void mainTimer();
+
+    /*
+        validateTarget()
+        ----------------
+        keeps nextWaypoint pointing at a node that is really in the followed route: it picks the first
+        waypoint when there is no target yet and drops a target whose node was removed or cleared
+    */
+    void validateTarget();
 
     /*
         updatePositionData()
@@ -448,7 +475,11 @@ rclcpp_action::CancelResponse followRoute_Cancel(const std::shared_ptr<NAVGoalHa
 
 void followRoute_Accepted(const std::shared_ptr<NAVGoalHandle> goal_handle);
 
-void followRoute_Execute(const std::shared_ptr<NAVGoalHandle> goal_handle);
+// reports progress of / completes the active FollowRoute goal; called by mainTimer() (no extra thread)
+void updateFollowRouteGoal();
+
+// true if home is set, or could be set to the current fix (logged); false (logged) if there is no fix yet
+bool ensureHome();
 
 };
 

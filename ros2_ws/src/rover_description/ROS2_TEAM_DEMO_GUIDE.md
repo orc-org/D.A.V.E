@@ -61,8 +61,7 @@ flowchart TD
     CmdVel --> DriveNode
     DriveNode --> MotorTopics
 
-    CmdVel -->|"Direct Path"| SimBridge
-    MotorTopics -->|"Fallback Unmix Path"| SimBridge
+    MotorTopics -->|"SI Skid-Steer Unmix"| SimBridge
     SimBridge --> CmdVelSim
     CmdVelSim --> ParamBridge
     ParamBridge --> GZ_Out["Gazebo Physics & RViz"]
@@ -118,23 +117,18 @@ Press `W` or pull `R2` in the dashboard at `http://localhost:8000` and show the 
 ---
 
 ### Step 3: Drive Node Mixing (`/cmd_vel` $\rightarrow$ `/motor/*`)
-**Open File:** [`ros2_ws/src/drive_package/src/drive_node.cpp`](../drive_package/src/drive_node.cpp)
+**Open Files:** [`ros2_ws/src/drive_package/src/drive_node.cpp`](../drive_package/src/drive_node.cpp) & [`ros2_ws/src/drive_package/include/drive_package/drive_math.hpp`](../drive_package/include/drive_package/drive_math.hpp)
 
-1. **Subscriptions & Publishers ([Lines 16–32](../drive_package/src/drive_node.cpp#L16-L32)):**
-   * Show that `JoyDrive` (`drive_node`) subscribes to both `/joy` (native Linux controller) and `/cmd_vel` (dashboard/keyboard/autonomy).
-   * Show lines **28–31**: creates 4 `std_msgs/msg/Float32` publishers: `/motor/front_left`, `/motor/front_right`, `/motor/rear_left`, `/motor/rear_right`.
-2. **Skid-Steer Mixing Logic ([Lines 112–137](../drive_package/src/drive_node.cpp#L112-L137)):**
-   * Focus on `cmdVelCallback` (lines **118–122**):
-     ```cpp
-     float left = throttle - steering;
-     float right = throttle + steering;
-     left  = std::clamp(left,  -1.0f, 1.0f);
-     right = std::clamp(right, -1.0f, 1.0f);
-     ```
-   * Explain how differential/skid-steer turning works: positive `steering` (`angular.z > 0`, turning left) slows/reverses the left wheels and speeds up the right wheels, clamped between `-1.0` (-100% reverse) and `+1.0` (+100% forward).
-   * **Lines 130–133:** Publishes those normalized floats to all 4 `/motor/*` topics.
+1. **Subscriptions & Publishers ([`drive_node.cpp` Lines 29–58](../drive_package/src/drive_node.cpp#L29-L58)):**
+   * Show that `JoyDrive` (`drive_node`) subscribes to `/joy`, `/cmd_vel`, `/control_mode`, and `/sensitivity`.
+   * Creates 4 `std_msgs/msg/Float32` publishers: `/motor/front_left`, `/motor/front_right`, `/motor/rear_left`, `/motor/rear_right`.
+2. **SI Differential Mixing & Mode Lockout ([`drive_node.cpp` Lines 140–165](../drive_package/src/drive_node.cpp#L140-L165) & [`drive_math.hpp` Lines 61–87](../drive_package/include/drive_package/drive_math.hpp#L61-L87)):**
+   * Focus on `cmdVelCallback` and `mixTwistCommand()`:
+     * Ignores `/cmd_vel` if `/control_mode` is not `"drive"` (e.g. when operating the arm), and ignores zero-twist heartbeats for `0.4s` while a physical `/joy` controller is actively driving.
+     * Computes SI left/right wheel speeds $v_L = v - \omega (W/2)$ and $v_R = v + \omega (W/2)$, normalizes by `max_wheel_speed`, scales by `/sensitivity` (`ultra`/`fine`/`coarse`), and clamps to `[-1.0, 1.0]`.
+   * Publishes those normalized floats to all 4 `/motor/*` topics via `publishWheelPair()`.
 3. **Closed-Loop UI Feedback ([`dashboard/app.js` Lines 432–466](../../../dashboard/app.js#L432-L466)):**
-   * Flip back to `dashboard/app.js` lines **432–466** and **492–517**: point out that the dashboard's 4 wheel power bars do **not** just display your local key press—they actually subscribe to `/motor/front_left`, etc. coming back from `drive_node`! If `drive_node` is stopped in the Process Manager, the power bars won't move.
+   * Flip back to `dashboard/app.js`: point out that the dashboard's 4 wheel power bars subscribe to `/motor/front_left`, etc. coming back from `drive_node`! If `drive_node` is stopped or locked out in `"arm"` mode, the power bars won't move.
 
 **Live Demo Action:**
 In **Terminal 2**, run:
@@ -149,19 +143,18 @@ Drive forward and turn in the dashboard to show the float output changing betwee
 Now explain what happens to those commands inside the simulator across 3 files:
 
 #### 1. [`ros2_ws/src/rover_description/scripts/sim_drive_bridge.py`](scripts/sim_drive_bridge.py)
-* **Lines 19–26:** Declares `max_linear_speed` (`1.5 m/s`) and `max_angular_speed` (`2.0 rad/s`).
-* **Lines 40–49:** Subscribes to `/motor/*` and `/cmd_vel`, and creates a publisher on `/cmd_vel_sim`.
-* **Lines 72–79 (`cb_cmd_vel`):** Scales normalized `/cmd_vel` inputs by `max_lin` and `max_ang` and publishes directly to `/cmd_vel_sim`.
-* **Lines 81–108 (`update_and_publish`):**
-  * **Lines 89–102:** If `/joy` is used instead of `/cmd_vel`, unmixes the 4 `/motor/*` topics back into a `Twist` message.
-  * **Lines 103–107:** Safety watchdog—if inputs stop arriving for more than `0.5s`, publishes an explicit zero-velocity `Twist` so the rover doesn't coast forever in Gazebo.
+* **Lines 19–34:** Declares `max_linear_speed` (`1.5 m/s`), `max_angular_speed` (`2.0 rad/s`), `wheel_separation` (`0.60 m`), `max_wheel_speed` (`1.0 m/s`), and `subscribe_cmd_vel` (`False` when `drive_node` runs).
+* **Lines 39–52:** Subscribes to `/motor/*` (and only subscribes to `/cmd_vel` when `use_drive_node:=false`) and publishes `/cmd_vel_sim`.
+* **Lines 88–115 (`update_and_publish`):**
+  * **Lines 93–104:** Reconstructs SI linear velocity $v_x = \frac{1}{2}(v_L + v_R)$ and angular velocity $\omega_z = (v_R - v_L) / W$ from the 4 `/motor/*` topics and publishes `Twist` on `/cmd_vel_sim`.
+  * **Lines 105–107:** Safety watchdog—if inputs stop arriving for more than `0.5s`, publishes an explicit zero-velocity `Twist` so the rover doesn't coast forever in Gazebo.
 
 #### 2. [`ros2_ws/src/rover_description/launch/sim.launch.py`](launch/sim.launch.py)
-* **Lines 66–79 (`ros_gz_bridge`):**
+* **Lines 71–121 (`ros_gz_bridge` & `depth_info_bridge`):**
   * Explain that Gazebo Fortress has its own internal C++ transport layer (`ignition.msgs`).
   * `parameter_bridge` translates ROS 2 messages to/from Gazebo messages:
     * `]` means **ROS 2 $\rightarrow$ Gazebo**: `/cmd_vel_sim@geometry_msgs/msg/Twist]ignition.msgs.Twist`
-    * `[` means **Gazebo $\rightarrow$ ROS 2**: `/odom`, `/clock`, `/tf`, `/joint_states`.
+    * `[` means **Gazebo $\rightarrow$ ROS 2**: `/odom`, `/clock`, `/tf`, `/joint_states`, plus the simulated 3D LiDAR (`/lidar/points`), IMU (`/lidar/imu`), and RGB-D camera topics (`/camera/*`).
 
 #### 3. [`ros2_ws/src/rover_description/urdf/gazebo_control.xacro`](urdf/gazebo_control.xacro)
 * **Lines 7–40 (`DiffDrive` plugin):**
@@ -174,30 +167,28 @@ Now explain what happens to those commands inside the simulator across 3 files:
 ---
 
 ### Step 4B: How the Exact Same Topics Reach the *Physical* Wheels (CAN Bus)
-**Open File:** [`ros2_ws/src/drive_package/src/vesc_can_driver_node.cpp`](../drive_package/src/vesc_can_driver_node.cpp)
+**Open Files:** [`ros2_ws/src/drive_package/src/vesc_can_driver_node.cpp`](../drive_package/src/vesc_can_driver_node.cpp) & [`ros2_ws/src/drive_package/include/drive_package/drive_math.hpp`](../drive_package/include/drive_package/drive_math.hpp)
 
 Explain to the team that on the real rover, `drive_node` doesn't change at all—instead of `sim_drive_bridge.py`, we run `vesc_can_driver_node`:
 
-1. **Wheel CAN IDs & Shared Parameters ([Lines 25–46](../drive_package/src/vesc_can_driver_node.cpp#L25-L46)):**
+1. **Wheel CAN IDs, Shared `wheel_radius`, & Safety Parameters ([`vesc_can_driver_node.cpp` Lines 29–64](../drive_package/src/vesc_can_driver_node.cpp#L29-L64)):**
    * Uses Linux network interface `can0`.
-   * Each physical VESC motor controller has a unique hardware CAN ID (lines **35–38**):
-     * Front Left: `53`
-     * Front Right: `44`
-     * Rear Left: `48`
-     * Rear Right: `7`
-   * Loads `wheel_radius` (`0.15 m`) from the shared [`physical_params.yaml`](config/physical_params.yaml#L10) via `loadWheelRadiusFromConfig()` so simulation and hardware stay in sync unless overridden by ROS parameter.
-2. **Subscribing to `/motor/*` ([Lines 94–117](../drive_package/src/vesc_can_driver_node.cpp#L94-L117)):**
-   * Subscribes to the exact same `/motor/front_left`, `/motor/front_right`, `/motor/rear_left`, `/motor/rear_right` topics published by `drive_node` and stores them in `target_fl_`, `target_fr_`, `target_rl_`, `target_rr_`.
-3. **50 Hz Slew-Rate Ramping ([Lines 120–123](../drive_package/src/vesc_can_driver_node.cpp#L120-L123) & [Lines 243–272](../drive_package/src/vesc_can_driver_node.cpp#L243-L272)):**
-   * Rather than slamming the physical gearboxes with instantaneous 0% to 100% torque spikes, `updateLoop()` runs at 50 Hz and smoothly ramps `current_fl_` toward `target_fl_` based on `ramp_rate_` (`rampValue()`).
-4. **Control Mode Conversion ([Lines 274–333](../drive_package/src/vesc_can_driver_node.cpp#L274-L333)):**
-   * Supports 3 VESC modes:
-     * **`erpm` mode (Lines 281–315):** Converts target velocity (`m/s`) into electrical RPM using `wheel_radius` from [`physical_params.yaml`](config/physical_params.yaml#L10) (`0.15m`), motor pole pairs (`2`), and gearbox ratio (`50:1`), and sends VESC command ID `3` (`CAN_PACKET_SET_RPM`). When stopped (`< 0.01`), it sends `CAN_PACKET_SET_CURRENT = 0` (lines **296–300**) so the motors relax instead of jittering at 0 RPM.
-     * **`current` mode (Lines 316–320):** Multiplies by `max_current` (`14A * 1000`) with command ID `1` (`CAN_PACKET_SET_CURRENT`).
-     * **`duty` mode (Lines 321–330):** Scales by `max_duty` (`0.95 * 100000`) with command ID `0` (`CAN_PACKET_SET_DUTY`).
-5. **Packing & Transmitting the Raw 29-Bit Extended CAN Frame ([Lines 173–241](../drive_package/src/vesc_can_driver_node.cpp#L173-L241)):**
-   * **Lines 173–211 (`initCanSocket`):** Opens a raw Linux `PF_CAN` socket on `can0` in non-blocking mode (`O_NONBLOCK`).
-   * **Lines 214–241 (`sendVescCanFrame`):** Packs the 29-bit extended CAN identifier (`(comm_id << 8) | can_id | CAN_EFF_FLAG`), big-endian encodes the 32-bit integer payload into `frame.data[0..3]`, and writes the `can_frame` struct directly to the Linux kernel CAN bus socket.
+   * Each physical VESC motor controller has a unique hardware CAN ID (lines **45–48**): Front Left `53`, Front Right `44`, Rear Left `48`, Rear Right `7`.
+   * Loads `wheel_radius` (`0.15 m`) from [`physical_params.yaml`](config/physical_params.yaml#L10) via `loadWheelRadiusFromConfig()` ([lines 166–196](../drive_package/src/vesc_can_driver_node.cpp#L166-L196)) so simulation and hardware never drift out of sync.
+   * Declares `command_timeout` (`0.5 s` deadman stop) and `brake_current` (`5.0 A` active brake on zero/timeout).
+2. **Subscribing to `/motor/*` & `/control_mode` Lockout ([Lines 111–145](../drive_package/src/vesc_can_driver_node.cpp#L111-L145)):**
+   * Subscribes to `/motor/front_left`, `/motor/front_right`, `/motor/rear_left`, `/motor/rear_right`, rejects NaN values or non-`"drive"` `/control_mode` states, and records steady-clock timestamps per wheel.
+3. **50 Hz Deadman Check, Slew-Rate Ramping & CAN Status Readback ([Lines 254–369](../drive_package/src/vesc_can_driver_node.cpp#L254-L369)):**
+   * Reads incoming VESC `STATUS_1` CAN frames (`readStatusFrames`) and publishes measured wheel velocity and current on `/wheel_states` (`sensor_msgs/msg/JointState`) for `rover_ekf`.
+   * Enforces the `0.5 s` deadman timeout (`enforceTimeout`) and smoothly ramps `current_fl_` toward `target_fl_` based on `ramp_rate_`.
+4. **Control Mode Conversion ([`drive_math.hpp` Lines 89–144](../drive_package/include/drive_package/drive_math.hpp#L89-L144)):**
+   * `computeVescCanCommand()` supports 3 VESC modes plus active braking:
+     * **Active Brake (`comm_id = 2`, `CAN_PACKET_SET_CURRENT_BRAKE`):** Applies `brake_current` (`5000 mA`) when stopped or timed out (`brake_on_zero:=true`) so the rover holds position on slopes.
+     * **`erpm` mode (`comm_id = 3`, `CAN_PACKET_SET_RPM`):** Converts velocity (`m/s`) into electrical RPM using `wheel_radius` (`0.15 m`), `pole_pairs` (`2`), and `gear_ratio` (`50:1`), clamped to `[-max_erpm, +max_erpm]`.
+     * **`current` (`comm_id = 1`) & `duty` (`comm_id = 0`) modes:** Scales by `max_current` (`14A * 1000`) or `max_duty` (`0.95 * 100000`).
+5. **Packing & Transmitting the Raw 29-Bit Extended CAN Frame ([`vesc_can_driver_node.cpp` Lines 198–252](../drive_package/src/vesc_can_driver_node.cpp#L198-L252)):**
+   * **`initCanSocket`:** Opens a raw Linux `PF_CAN` socket on `can0` in non-blocking mode (`O_NONBLOCK`).
+   * **`sendVescCanFrame`:** Packs the 29-bit extended CAN identifier (`(comm_id << 8) | can_id | CAN_EFF_FLAG`), big-endian encodes the 32-bit integer payload into `frame.data[0..3]`, and writes the `can_frame` struct to the CAN socket.
 
 ---
 
@@ -219,23 +210,24 @@ Use this section at the end of the demo to save your teammates hours of debuggin
   * Unlike ROS 1, ROS 2 publishers and subscribers have **QoS policies** (Reliability and Durability). If a publisher and subscriber have incompatible QoS, **ROS 2 will not throw an error—they just silently ignore each other.**
   * **Example in our codebase:** `robot_state_publisher` publishes the URDF model on `/robot_description` only **once** at startup using `Durability: Transient Local` (which latches the last message for late joiners). In [`default.rviz` line 200](rviz/default.rviz#L200), RViz's `RobotModel` display **must** be set to `Durability Policy: Transient Local`—when it was set to `Volatile`, RViz missed the startup message and rendered an empty screen.
 
-### Quirk 3: Simulation Time (`use_sim_time`) vs. Wall-Clock Time
+### Quirk 3: Simulation Time (`use_sim_time`) vs. Steady Clock
 * **Reference Files:**
-  * [`sim.launch.py` (Lines 74–79 & 87–108)](launch/sim.launch.py#L74-L108)
-  * [`sim_drive_bridge.py` (Lines 34–37 & 82)](scripts/sim_drive_bridge.py#L34-L82)
+  * [`sim.launch.py` (Lines 71–192)](launch/sim.launch.py#L71-L192)
+  * [`sim_drive_bridge.py` (Lines 54–115)](scripts/sim_drive_bridge.py#L54-L115)
 * **What to explain:**
-  * In simulation, Gazebo publishes simulated time on `/clock`. Nodes launched with `use_sim_time:=true` use `/clock` for ROS timers and TF timestamps instead of the computer's wall clock.
-  * **Gotcha 1:** Never pass `use_sim_time:=true` to `parameter_bridge` itself ([`sim.launch.py` line 66](launch/sim.launch.py#L66)), because `parameter_bridge` is the node that bridges `/clock` from Gazebo into ROS 2!
-  * **Gotcha 2:** For safety watchdogs (like checking if `/cmd_vel` timed out in [`sim_drive_bridge.py` line 82](scripts/sim_drive_bridge.py#L82)), using Python's wall-clock `time.monotonic()` prevents the watchdog from freezing if Gazebo is paused or experiences sim-time jitter.
+  * In simulation, Gazebo publishes simulated time on `/clock`. Nodes launched with `use_sim_time:=true` use `/clock` for ROS timers, TF timestamps, and `self.get_clock().now()` instead of the computer's wall clock.
+  * **Gotcha 1:** Never pass `use_sim_time:=true` to `parameter_bridge` itself ([`sim.launch.py` line 71](launch/sim.launch.py#L71)), because `parameter_bridge` is the node that bridges `/clock` from Gazebo into ROS 2!
+  * **Gotcha 2:** Hardware drivers like `drive_node` and `vesc_can_driver_node` use `RCL_STEADY_TIME` (`steady_.now()`) for deadman and arbitration timeouts so wall-clock safety timeouts cannot be jumped by NTP adjustments.
 
-### Quirk 4: TF2 Single-Parent Rule (Why Not to Run `Motion Coordinator` in Gazebo)
+### Quirk 4: TF2 Single-Parent Rule (`publish_tf:=false` in Simulation)
 * **Reference Files:**
   * [`gazebo_control.xacro` (Lines 36–38)](urdf/gazebo_control.xacro#L36-L38)
-  * [`motion_coordinator_node.py` (Lines 188–216)](../arm_controller/arm_controller/motion_coordinator_node.py#L188-L216)
+  * [`sim.launch.py` (Lines 164–179)](launch/sim.launch.py#L164-L179)
+  * [`motion_coordinator_node.py`](../arm_controller/arm_controller/motion_coordinator_node.py)
 * **What to explain:**
   * In ROS 2 TF2, every coordinate frame forms a strict tree where each child frame can only have **one parent**.
-  * In Gazebo simulation, the TF chain is `odom -> base_footprint -> base_link -> *_wheel_link`.
-  * [`motion_coordinator_node.py`](../arm_controller/arm_controller/motion_coordinator_node.py#L204-L216) is a standalone kinematic simulator that broadcasts `world -> base_link` and fake `/joint_states`. If someone clicks **START** on `Motion Coordinator` in the dashboard while Gazebo is running, `base_link` gets two competing parents (`base_footprint` and `world`), which breaks the TF tree in RViz.
+  * In Gazebo simulation, the TF chain `odom -> base_footprint -> base_link -> *_wheel_link` is published by Gazebo's `DiffDrive` plugin and `robot_state_publisher`.
+  * Therefore, when `rover_ekf` runs in simulation (`use_sim_stack:=true`), [`sim.launch.py` line 176](launch/sim.launch.py#L176) sets `publish_tf:=False`, and `motion_coordinator_node.py` also defaults `publish_tf` to `False` so `base_link` never gets competing parents.
 
 ### Quirk 5: How the Dashboard Process Manager Tracks Nodes
 * **Reference File:** [`dashboard_helper_node.py` (Lines 27–51 & 168–195)](../arm_controller/arm_controller/dashboard_helper_node.py#L27-L51)

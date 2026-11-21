@@ -10,11 +10,15 @@
   <depend>rclpy</depend>
   <depend>geometry_msgs</depend>
   <depend>sensor_msgs</depend>
+  <depend>nav_msgs</depend>
+  <depend>tf2_ros</depend>
   <depend>std_msgs</depend>
   <depend>std_srvs</depend>
   <depend>arm_interfaces</depend>
   <depend>numpy</depend>
   <depend>python3-matplotlib</depend>
+  <depend>python3-yaml</depend>
+  <exec_depend>rover_description</exec_depend>
   <exec_depend>rosbridge_server</exec_depend>
 
   <test_depend>ament_copyright</test_depend>

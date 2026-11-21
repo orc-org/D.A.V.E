@@ -1,7 +1,7 @@
 #include "SerialPort.hpp"
 
 SerialPort::SerialPort()
-    : SerialPort(stringToCharacterArray("/dev/ttyACM0"), false, false, false, false, false, false, 0, 0, 9600) {}
+    : SerialPort(std::string("/dev/ttyACM0"), false, false, false, false, false, false, 0, 0, 9600) {}
 
 SerialPort::SerialPort(char* portID)
     : SerialPort(portID, false, false, false, false, false, false, 0, 0, 9600) {}
@@ -19,11 +19,12 @@ SerialPort::SerialPort(char* portID, bool parityBit, bool extraStopBit, int mini
     : SerialPort(portID, parityBit, extraStopBit, false, false, false, false, minimumData, timeout, baud) {}
 
 SerialPort::SerialPort(char* portID, bool parityBit, bool extraStopBit, bool hardwareControl, bool controlLines, bool canonical, bool echo, int minimumData, int timeout, int baud)
-    : portID(portID), parityBit(parityBit), twoStopBits(extraStopBit), hardwareFlowControlEnabled(hardwareControl),
-    enableControlLines(controlLines), canonicalMode(canonical), enableEcho(echo), minimumData(minimumData), timeout(timeout), baudRate(baud){ 
-
-        portIsOpen = false;
-    }
+    : serial_port(-1), portID(stringToCharacterArray(portID ? std::string(portID) : std::string())),
+      parityBit(parityBit), twoStopBits(extraStopBit), hardwareFlowControlEnabled(hardwareControl),
+      enableControlLines(controlLines), canonicalMode(canonical), enableEcho(echo),
+      minimumData(minimumData), timeout(timeout), baudRate(baud) {
+    portIsOpen = false;
+}
 
 SerialPort::SerialPort(std::string portID)
     : SerialPort(portID, false, false, false, false, false, false, 0, 0, 9600) {}
@@ -41,23 +42,31 @@ SerialPort::SerialPort(std::string portID, bool parityBit, bool extraStopBit, in
     : SerialPort(portID, parityBit, extraStopBit, false, false, false, false, minimumData, timeout, baud) {}
 
 SerialPort::SerialPort(std::string portID, bool parityBit, bool extraStopBit, bool hardwareControl, bool controlLines, bool canonical, bool echo, int minimumData, int timeout, int baud)
-    : portID(stringToCharacterArray(portID)), parityBit(parityBit), twoStopBits(extraStopBit), hardwareFlowControlEnabled(hardwareControl),
-    enableControlLines(controlLines), canonicalMode(canonical), enableEcho(echo), minimumData(minimumData), timeout(timeout), baudRate(baud){ 
-
-        portIsOpen = false;
-    }
+    : serial_port(-1), portID(stringToCharacterArray(portID)),
+      parityBit(parityBit), twoStopBits(extraStopBit), hardwareFlowControlEnabled(hardwareControl),
+      enableControlLines(controlLines), canonicalMode(canonical), enableEcho(echo),
+      minimumData(minimumData), timeout(timeout), baudRate(baud) {
+    portIsOpen = false;
+}
 
 SerialPort::~SerialPort(){
-    delete portID;
-    close(serial_port);
+    delete[] portID;
+    portID = nullptr;
+    if (serial_port >= 0) {
+        close(serial_port);
+        serial_port = -1;
+    }
+    portIsOpen = false;
 }
 
-void SerialPort::setPortID(char* portID){
-    this->portID = portID;
+void SerialPort::setPortID(char* newPortID){
+    delete[] portID;
+    portID = stringToCharacterArray(newPortID ? std::string(newPortID) : std::string());
 }
 
-void SerialPort::setPortID(std::string portID){
-    this->portID = stringToCharacterArray(portID);
+void SerialPort::setPortID(std::string newPortID){
+    delete[] portID;
+    portID = stringToCharacterArray(newPortID);
 }
 
 void SerialPort::toggleParityBit(){
@@ -120,8 +129,8 @@ void SerialPort::configure(){
     else
         tty.c_cflag |= CSTOPB;  // 2 stop bits
 
-    // set the number of bits per byte. I have this set to 8 as this set to 8 as that is pretty standard. if you need different,
-    // then change twhich line is uncommented below
+    // set the number of bits per byte. I have this set to 8 as that is pretty standard. if you need different,
+    // then change which line is uncommented below
     tty.c_cflag &= ~CSIZE; // clear all the size bits
     // tty.c_cflag |= CS5; // 5 bits per byte
     // tty.c_cflag |= CS6; // 6 bits per byte
@@ -130,7 +139,7 @@ void SerialPort::configure(){
 
     // Hardware flow control (crtscts)
     // basically, this is for if we've got 2 extra wires that indicate when the device is ready to receive a message
-    // it's like adding enable pins to UART communication, in the case of DaVE, we will not need this, but i'll laeve it in for future club members
+    // it's like adding enable pins to UART communication, in the case of DaVE, we will not need this, but i'll leave it in for future club members
     if (!hardwareFlowControlEnabled)
         tty.c_cflag &= ~CRTSCTS; // no rts/cts control
     else
@@ -167,12 +176,7 @@ void SerialPort::configure(){
     }
 
     // Disable signal chars
-    tty.c_lflag &= ~ISIG; // Diable interpretation of INTR, QUIT and SUSP
-
-    // software flow control
-    // Realistically, this should always be on for a serial port
-    // uncomment next line if you doubt me
-    // tty.c_iflag &= ~(IXON | IXOFF | IXANY); // turn off software control
+    tty.c_lflag &= ~ISIG; // Disable interpretation of INTR, QUIT and SUSP
 
     // Disable Special Handling of Bytes on Receive
     tty.c_iflag &= ~(IGNBRK|BRKINT|PARMRK|ISTRIP|INLCR|IGNCR|ICRNL); // disables this feature so we just get the raw data
@@ -180,8 +184,6 @@ void SerialPort::configure(){
     // output modes
     tty.c_oflag &= ~OPOST; // Prevent special interpretation of output bytes (e.g. newline chars)
     tty.c_oflag &= ~ONLCR; // Prevent conversion of newline to carriage return/line feed
-    // tty.c_oflag &= ~OXTABS; // Prevent conversion of tabs to spaces (NOT PRESENT IN LINUX)
-    // tty.c_oflag &= ~ONOEOT; // Prevent removal of C-d chars (0x004) in output (NOT PRESENT IN LINUX)
 
     //VMIN and VTIME
     if (minimumData < 0 || minimumData > 255){
@@ -233,13 +235,14 @@ void SerialPort::configure(){
 void SerialPort::begin(){
     // start serial communication
     serial_port = open(portID, O_RDWR);
-    portIsOpen = true;
 
-    // check for errors in creating the serial connectiom
+    // check for errors in creating the serial connection
     if(serial_port < 0){
+        portIsOpen = false;
         printf("Error %d from open: %s\n", errno, std::strerror(errno));
         return;
     }
+    portIsOpen = true;
 
     // read in existing settings and handle any error that come up
     if(tcgetattr(serial_port, &tty) != 0){
@@ -250,22 +253,23 @@ void SerialPort::begin(){
 }
 
 void SerialPort::write(std::string message){
-    write(stringToCharacterArray(message));
+    if (serial_port < 0 || message.empty()) return;
+    ssize_t written = ::write(serial_port, message.data(), message.size());
+    if (written < 0) printf("Error %d writing to serial port: %s\n", errno, std::strerror(errno));
 }
 
 void SerialPort::write(char* message){
-    ::write(serial_port, message, sizeof(message));
+    // sizeof(message) is the size of the pointer (8 bytes), not of the text it points to
+    if (serial_port < 0 || message == nullptr) return;
+    ssize_t written = ::write(serial_port, message, std::strlen(message));
+    if (written < 0) printf("Error %d writing to serial port: %s\n", errno, std::strerror(errno));
 }
 
 std::string SerialPort::read(){
+    if (serial_port < 0) return "";
     int n = ::read(serial_port, &read_buffer, sizeof(read_buffer)); // n is the number of bytes read
-    std::string message = "";
-
-    for (int i = 0; i < n; i++){
-        message += read_buffer[i];
-    }
-
-    return message;
+    if (n <= 0) return "";
+    return std::string(read_buffer, static_cast<size_t>(n));
 }
 
 char* SerialPort::stringToCharacterArray(std::string message){
@@ -290,12 +294,3 @@ void SerialPort::printConfig(){
     printf("Echo: %s\n", enableEcho ? "enabled" : "disabled");
     printf("Baud Rate: %d\n", baudRate);
 }
-
-// int main(int argc, char** argv) {
-//     (void)argc;
-//     (void)argv;
-
-//     std::cout << "Hello From the Serial Port file!!";
-
-//     return 0;
-// }

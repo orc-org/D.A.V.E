@@ -1,0 +1,10 @@
+/* Outfit (SIL Open Font License 1.1, see fontsource-outfit@5.3.0/LICENSE), served locally so the
+   dashboard works without internet. Latin subset only; other scripts fall back to the system font. */
+@font-face { font-family: 'Outfit'; font-style: normal; font-display: swap; font-weight: 300;
+  src: url('fontsource-outfit@5.3.0/files/outfit-latin-300-normal.woff2') format('woff2'); }
+@font-face { font-family: 'Outfit'; font-style: normal; font-display: swap; font-weight: 400;
+  src: url('fontsource-outfit@5.3.0/files/outfit-latin-400-normal.woff2') format('woff2'); }
+@font-face { font-family: 'Outfit'; font-style: normal; font-display: swap; font-weight: 600;
+  src: url('fontsource-outfit@5.3.0/files/outfit-latin-600-normal.woff2') format('woff2'); }
+@font-face { font-family: 'Outfit'; font-style: normal; font-display: swap; font-weight: 800;
+  src: url('fontsource-outfit@5.3.0/files/outfit-latin-800-normal.woff2') format('woff2'); }

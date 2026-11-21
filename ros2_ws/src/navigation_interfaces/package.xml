@@ -3,7 +3,7 @@
 <package format="3">
   <name>navigation_interfaces</name>
   <version>0.0.0</version>
-  <description>TODO: Package description</description>
+  <description>Service and message definitions for navigation_system</description>
   <maintainer email="isaac.bobmeyer@gmail.com">isaac</maintainer>
   <license>Apache-2.0</license>
 
