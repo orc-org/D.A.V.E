@@ -9,6 +9,7 @@ Publishes:
 """
 import math
 import rclpy
+from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 from geometry_msgs.msg import Vector3
 from nav_msgs.msg import Odometry
@@ -58,7 +59,13 @@ class SimSensorBridge(Node):
         self.datum_lon = float(self.get_parameter('datum_longitude').value)
         self.datum_alt = float(self.get_parameter('datum_altitude').value)
         self.wheel_radius = float(self.get_parameter('wheel_radius').value)
+        if not math.isfinite(self.wheel_radius) or self.wheel_radius <= 0.0:
+            self.get_logger().warn(f"Invalid wheel_radius={self.wheel_radius}; defaulting to 0.15 m")
+            self.wheel_radius = 0.15
         self.wheel_separation = float(self.get_parameter('wheel_separation').value)
+        if not math.isfinite(self.wheel_separation) or self.wheel_separation <= 0.0:
+            self.get_logger().warn(f"Invalid wheel_separation={self.wheel_separation}; defaulting to 0.60 m")
+            self.wheel_separation = 0.60
         self.gps_period_s = 1.0 / max(float(self.get_parameter('gps_rate_hz').value), 0.5)
         self.gps_var = float(self.get_parameter('gps_variance_m2').value)
 
@@ -97,7 +104,8 @@ class SimSensorBridge(Node):
             return
         names, vels = [], []
         for n, v in zip(msg.name, msg.velocity):
-            if ('left' in n or 'right' in n) and math.isfinite(v):
+            lname = n.lower()
+            if 'wheel' in lname and ('left' in lname or 'right' in lname) and math.isfinite(v):
                 names.append(n)
                 vels.append(float(v))
         if len(names) >= 2:
@@ -154,12 +162,11 @@ def main(args=None):
     node = SimSensorBridge()
     try:
         rclpy.spin(node)
-    except KeyboardInterrupt:
+    except (KeyboardInterrupt, ExternalShutdownException):
         pass
     finally:
         node.destroy_node()
-        if rclpy.ok():
-            rclpy.shutdown()
+        rclpy.try_shutdown()
 
 
 if __name__ == '__main__':
