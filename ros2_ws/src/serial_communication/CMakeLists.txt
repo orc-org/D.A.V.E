@@ -11,49 +11,46 @@ find_package(rclcpp REQUIRED)
 find_package(serial_interfaces REQUIRED)
 find_package(std_msgs REQUIRED)
 
-set(SOURCE_FILES
-  src/SerialPort.cpp 
+add_library(serial_port SHARED src/SerialPort.cpp)
+target_include_directories(serial_port PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include/serial_communication>
+  $<INSTALL_INTERFACE:include>
+  $<INSTALL_INTERFACE:include/serial_communication>
 )
 
-
-add_executable(XLRnode 
+add_executable(XLRnode
   src/XLRnode.cpp
-  src/SerialPort.cpp
 )
 ament_target_dependencies(XLRnode rclcpp serial_interfaces)
+target_link_libraries(XLRnode serial_port)
 
-add_executable(XLR_UI 
+add_executable(XLR_UI
   src/XLR_User_input.cpp
-  src/SerialPort.cpp
 )
 ament_target_dependencies(XLR_UI rclcpp serial_interfaces)
+target_link_libraries(XLR_UI serial_port)
 
-target_include_directories(XLRnode PUBLIC
-  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include/serial_communication>
-  $<INSTALL_INTERFACE:include/serial_communication>
-)
-
-target_include_directories(XLR_UI PUBLIC
-  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include/serial_communication>
-  $<INSTALL_INTERFACE:include/serial_communication>
-)
-
-add_executable(morse_bridge_node 
+add_executable(morse_bridge_node
   src/MorseBridgeNode.cpp
-  src/SerialPort.cpp
 )
 ament_target_dependencies(morse_bridge_node rclcpp std_msgs serial_interfaces)
+target_link_libraries(morse_bridge_node serial_port)
 
-target_include_directories(morse_bridge_node PUBLIC
-  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include/serial_communication>
-  $<INSTALL_INTERFACE:include/serial_communication>
-)
-
-ament_export_include_directories(include/serial_communication)
+ament_export_targets(export_serial_communication HAS_LIBRARY_TARGET)
+ament_export_include_directories(include include/serial_communication)
 
 install(
-  DIRECTORY include/serial_communication
+  DIRECTORY include/
   DESTINATION include
+)
+
+install(TARGETS
+  serial_port
+  EXPORT export_serial_communication
+  ARCHIVE DESTINATION lib
+  LIBRARY DESTINATION lib
+  RUNTIME DESTINATION bin
 )
 
 install(TARGETS

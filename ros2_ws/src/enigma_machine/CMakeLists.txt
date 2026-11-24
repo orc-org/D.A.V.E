@@ -11,6 +11,7 @@ find_package(ament_cmake_python REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(rclpy REQUIRED)
 find_package(sensor_msgs REQUIRED)
+find_package(std_msgs REQUIRED)
 find_package(cv_bridge REQUIRED)
 find_package(enigma_machine_interfaces REQUIRED)
 find_package(rclcpp_action REQUIRED)
@@ -23,7 +24,7 @@ include_directories(include)
 
 #create c++ executables
 add_executable(enigma_node src/EnigmaMachine.cpp)
-ament_target_dependencies(enigma_node rclcpp rclcpp_action enigma_machine_interfaces arm_interfaces std_srvs)
+ament_target_dependencies(enigma_node rclcpp rclcpp_action enigma_machine_interfaces arm_interfaces std_msgs std_srvs)
 
 #install cpp excecutables
 install(TARGETS

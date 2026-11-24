@@ -5,8 +5,11 @@
 #include <iostream>
 #include <memory>
 #include <mutex>
+#include <stdexcept>
 #include <thread>
 #include <vector>
+
+#include <ament_index_cpp/get_package_share_directory.hpp>
 
 #include "Sprite.hpp"
 #include "Waypoint.hpp"
@@ -99,6 +102,16 @@ struct simpleObstacle{
 namespace {
 std::string resolveAssetPath(const std::string& filename)
 {
+    try {
+        const auto shareAsset =
+            std::filesystem::path(ament_index_cpp::get_package_share_directory("navigation_system")) /
+            "assets" / "images" / filename;
+        if (std::filesystem::exists(shareAsset)) {
+            return shareAsset.string();
+        }
+    } catch (const std::exception&) {
+    }
+
     const std::filesystem::path sourceFile(__FILE__);
     const std::filesystem::path sourceDir = sourceFile.parent_path();
     const std::filesystem::path assetDir = sourceDir.parent_path() / "assets" / "images";

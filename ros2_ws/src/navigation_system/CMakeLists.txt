@@ -11,19 +11,15 @@ list(APPEND CMAKE_PREFIX_PATH "${ROS2_WS}/install")
 
 # find dependencies
 find_package(ament_cmake REQUIRED)
+find_package(ament_index_cpp REQUIRED)
 find_package(rclcpp REQUIRED)
-find_package(rclcpp_action)
-find_package(rclcpp_components)
+find_package(rclcpp_action REQUIRED)
+find_package(rclcpp_components REQUIRED)
 find_package(navigation_interfaces REQUIRED)
 find_package(serial_interfaces REQUIRED)
 find_package(serial_communication REQUIRED)
 find_package(sensor_msgs REQUIRED)
 find_package(raylib QUIET)
-
-install(
-  DIRECTORY ${ROS2_WS}/src/serial_communication/include/serial_communication
-  DESTINATION include
-)
 
 install(
   DIRECTORY include/
@@ -34,7 +30,6 @@ set(SHARED_SOURCES
   src/Waypoint.cpp
   src/Obstacle.cpp
   src/ListOfWaypoints.cpp
-  ${ROS2_WS}/src/serial_communication/src/SerialPort.cpp
 )
 
 set(NAVNODE_SOURCES
@@ -50,11 +45,10 @@ set(NAVDISPLAY_SOURCES
 
 add_executable(NAVnode ${NAVNODE_SOURCES})
 ament_target_dependencies(NAVnode rclcpp rclcpp_action rclcpp_components navigation_interfaces serial_interfaces serial_communication sensor_msgs)
+target_link_libraries(NAVnode serial_communication::serial_port)
 target_include_directories(NAVnode PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include/navigation_system>
   $<INSTALL_INTERFACE:include/navigation_system>
-  $<BUILD_INTERFACE:${ROS2_WS}/src/serial_communication/include/serial_communication>
-  $<INSTALL_INTERFACE:include/serial_communication>
 )
 
 ament_export_include_directories(include)
@@ -65,14 +59,12 @@ install(TARGETS
 
 if(raylib_FOUND)
   add_executable(NAVDisplay ${NAVDISPLAY_SOURCES})
-  target_link_libraries(NAVDisplay raylib)
+  target_link_libraries(NAVDisplay raylib serial_communication::serial_port)
   # raylib is linked as a CMake target on the previous line; it is not an ament package
-  ament_target_dependencies(NAVDisplay rclcpp rclcpp_action navigation_interfaces serial_communication)
+  ament_target_dependencies(NAVDisplay rclcpp rclcpp_action ament_index_cpp navigation_interfaces serial_communication)
   target_include_directories(NAVDisplay PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include/navigation_system>
     $<INSTALL_INTERFACE:include/navigation_system>
-    $<BUILD_INTERFACE:${ROS2_WS}/src/serial_communication/include/serial_communication>
-    $<INSTALL_INTERFACE:include/serial_communication>
   )
   install(TARGETS
     NAVDisplay
@@ -80,6 +72,11 @@ if(raylib_FOUND)
 else()
   message(STATUS "raylib not found: building NAVnode headless without NAVDisplay")
 endif()
+
+install(DIRECTORY
+  assets
+  DESTINATION share/${PROJECT_NAME}
+)
 
 install(PROGRAMS
   src/gps_bridge_node.py
