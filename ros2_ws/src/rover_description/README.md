@@ -4,7 +4,7 @@ this package defines the physical identity, 3D model (URDF/Xacro), modern gazebo
 
 > [!NOTE]
 > * For a comprehensive deep dive into the simulation design, topic routing, coordinate frames (TF2), DDS configurations, and developer extension recipes (adding LiDAR, cameras, robotic arm control, custom worlds), see [SIMULATION_ARCHITECTURE.md](SIMULATION_ARCHITECTURE.md).
-> * For a step-by-step live walkthrough script showing how data flows from the Web Dashboard through ROS 2 to either the simulated Gazebo wheels or physical VESC CAN wheels (with exact file and line references), see [ROS2_TEAM_DEMO_GUIDE.md](ROS2_TEAM_DEMO_GUIDE.md).
+> * For a step-by-step live walkthrough script showing how data flows from the Web Dashboard through ROS 2 to either the simulated Gazebo wheels or physical VESC CAN wheels (with file and symbol references), see [ROS2_TEAM_DEMO_GUIDE.md](ROS2_TEAM_DEMO_GUIDE.md).
 
 ## prerequisites
 
@@ -40,12 +40,6 @@ colcon build --symlink-install
 source install/setup.bash
 ```
 
-> [!TIP]
-> If the full workspace build fails on `navigation_system` because `raylib` is not installed on your machine, build only the simulation and dashboard packages instead:
-> ```bash
-> colcon build --symlink-install --packages-up-to rover_description arm_controller
-> ```
-
 ## running the simulation
 
 ### option 1: standalone simulation (gazebo + rviz)
@@ -58,8 +52,10 @@ ros2 launch rover_description sim.launch.py
 
 optional launch arguments:
 * `use_rviz:=false` - disable rviz GUI
-* `use_drive_node:=false` - disable drive_node and motor bridge
-* `world:=<path>` - use a custom modern gazebo sdf world file
+* `use_drive_node:=false` - disable drive_node (allows `sim_drive_bridge.py` to subscribe to `/cmd_vel` directly)
+* `use_sim_stack:=true` - also launch `sim_sensor_bridge.py`, `rover_ekf` (`publish_tf:=false`), and `NAVnode` (`use_gps_fix_topic:=true`)
+* `gz_flags:='-r -s --headless-rendering'` - run Gazebo server headlessly without a GUI window
+* `world:=<path>` - use a custom modern gazebo sdf world file (e.g. `worlds/slam_yard.sdf`)
 
 ### option 2: full system (simulation + web dashboard)
 
@@ -84,7 +80,7 @@ open `http://localhost:8000` in your browser to monitor telemetry and drive.
 * **Manual vs. Auto Mode:** Teleop (`W`/`A`/`S`/`D`, on-screen buttons, and browser gamepad driving) only publishes `/cmd_vel` when the dashboard is in **MANUAL** mode (`autoMode == false`), which is the default on page load.
 * **Browser Gamepad Wake-Up:** Browsers do not expose USB/Bluetooth controllers to `navigator.getGamepads()` until you interact with the controller—plug in/connect your gamepad and press any button or move a stick while the dashboard tab is focused.
 * **Process Manager Safety (Sim vs. Hardware):**
-  * Do **not** start **Motion Coordinator** (`motion_coordinator`) while Gazebo is running; it publishes a competing `world -> base_link` TF that breaks RViz's `odom -> base_footprint -> base_link` tree.
+  * In simulation, Gazebo's `DiffDrive` plugin owns the `odom -> base_footprint -> base_link` TF tree (`sim.launch.py` launches `rover_ekf` with `publish_tf:=false` and does not launch `motion_coordinator`; `motion_coordinator` publishes `world -> odom`, not `base_link`, whenever `/ekf/odometry` is fresh).
   * Hardware-only entries in the Process Manager (such as **VESC BLDC Wheel Driver**, **Arm & Gripper Steppers**, and camera streamers) are for the physical Jetson/rover hardware and will fail or conflict if started on a local simulation-only laptop.
 
 ## network & `ROS_DOMAIN_ID`
@@ -119,12 +115,14 @@ press `i` / `,` for forward and backward, `j` / `l` for turning.
 
 ## package contents
 
-* **`urdf/rover.urdf.xacro`**: main robot description file configuring the 4-wheel mobile chassis, collision geometry, and inertia.
+* **`urdf/rover.urdf.xacro`**: main robot description file configuring the 4-wheel mobile chassis, collision geometry, inertia, and sensor includes.
+* **`urdf/sensors.xacro`**: simulated 3D LiDAR (Unitree L2 profile), IMU with Gaussian noise/bias, and RGB-D camera.
 * **`urdf/rover_arm.xacro`**: modular robotic arm and gripper definitions with collision and inertial elements.
 * **`urdf/gazebo_control.xacro`**: modern gazebo plugins (`ignition::gazebo::systems::DiffDrive` and `JointStatePublisher`).
 * **`urdf/inertial_macros.xacro`**: standard formulas for box, cylinder, and wheel inertia tensors.
-* **`worlds/empty.sdf`**: modern gazebo sdf world with physics and scene broadcaster plugins.
-* **`scripts/sim_drive_bridge.py`**: bridges `/motor/*` topics from `drive_node` to gazebo's `/cmd_vel_sim`.
+* **`worlds/empty.sdf` & `worlds/slam_yard.sdf`**: modern gazebo sdf worlds (flat ground plane and obstacle yard for SLAM/navigation testing).
+* **`scripts/sim_drive_bridge.py`**: bridges `/motor/*` topics from `drive_node` (or direct `/cmd_vel` when `use_drive_node:=false`) to gazebo's `/cmd_vel_sim`.
+* **`scripts/sim_sensor_bridge.py`**: synthesizes `/imu/data_raw`, `/imu/euler`, `/gps/fix`, and `/wheel_states` from Gazebo ground truth and sensors for full-stack autonomy simulation.
 * **`launch/sim.launch.py`**: launches modern gazebo, spawns the rover, starts rviz, and runs `drive_node` and the motor bridge.
 * **`launch/view_robot.launch.py`**: launches purely rviz without physics simulation.
 * **`config/physical_params.yaml`**: single source of truth for robot physical dimensions (meters and kilograms).

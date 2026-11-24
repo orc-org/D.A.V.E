@@ -45,3 +45,21 @@ NAVnode
 .env
 .python-version
 *.orig
+
+# SLAM program: recorded data, benchmark logs and the external overlay workspace
+slam_ws/
+bags/
+*.db3
+*.db3.zstd
+*.mcap
+bench/
+
+# NAVnode track logs (written relative to the current directory)
+captainsLogs/
+
+# Offline map tiles for the dashboard (large and licence-dependent; see dashboard/vendor/README.md)
+dashboard/tiles/
+
+# Unignore vendored JS bundles stored under package build/ subdirectories
+!dashboard/vendor/**/build/
+!dashboard/vendor/**/build/**

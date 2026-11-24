@@ -21,6 +21,18 @@
       name="ignition::gazebo::systems::SceneBroadcaster">
     </plugin>
 
+    <!-- sensors: renders the LiDAR and cameras (ogre2 needs OpenGL; under WSL2 this runs on the
+         Mesa/WSLg driver) and simulates the IMU -->
+    <plugin
+      filename="ignition-gazebo-sensors-system"
+      name="ignition::gazebo::systems::Sensors">
+      <render_engine>ogre2</render_engine>
+    </plugin>
+    <plugin
+      filename="ignition-gazebo-imu-system"
+      name="ignition::gazebo::systems::Imu">
+    </plugin>
+
     <!-- sun light -->
     <light type="directional" name="sun">
       <cast_shadows>true</cast_shadows>

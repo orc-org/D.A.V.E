@@ -3,10 +3,11 @@ import xacro
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
-from launch.substitutions import LaunchConfiguration
+from launch.substitutions import LaunchConfiguration, PythonExpression
 from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch_ros.actions import Node
+from launch_ros.parameter_descriptions import ParameterValue
 
 
 def generate_launch_description():
@@ -16,8 +17,10 @@ def generate_launch_description():
     # launch configurations
     use_rviz = LaunchConfiguration('use_rviz')
     use_drive_node = LaunchConfiguration('use_drive_node')
+    use_sim_stack = LaunchConfiguration('use_sim_stack')
     use_sim_time = LaunchConfiguration('use_sim_time')
     world = LaunchConfiguration('world')
+    gz_flags = LaunchConfiguration('gz_flags')
 
     # default world path (sdf for modern gazebo)
     default_world_path = os.path.join(pkg_rover_description, 'worlds', 'empty.sdf')
@@ -34,7 +37,9 @@ def generate_launch_description():
         PythonLaunchDescriptionSource(
             os.path.join(pkg_ros_gz_sim, 'launch', 'gz_sim.launch.py')
         ),
-        launch_arguments={'gz_args': ['-r ', world]}.items()
+        # gz_flags: '-r' runs with the GUI; use '-r -s --headless-rendering' for a server-only run
+        # (no window), which is how the sensors are tested without a display
+        launch_arguments={'gz_args': [gz_flags, ' ', world]}.items()
     )
 
     # publish robot state and tf
@@ -73,8 +78,34 @@ def generate_launch_description():
             '/odom@nav_msgs/msg/Odometry[ignition.msgs.Odometry',
             '/clock@rosgraph_msgs/msg/Clock[ignition.msgs.Clock',
             '/tf@tf2_msgs/msg/TFMessage[ignition.msgs.Pose_V',
-            '/joint_states@sensor_msgs/msg/JointState[ignition.msgs.Model'
+            '/joint_states@sensor_msgs/msg/JointState[ignition.msgs.Model',
+            # simulated perception sensors (urdf/sensors.xacro), renamed to the SLAM sensor contract
+            '/lidar/points@sensor_msgs/msg/PointCloud2[ignition.msgs.PointCloudPacked',
+            '/lidar/imu@sensor_msgs/msg/Imu[ignition.msgs.IMU',
+            '/camera/image@sensor_msgs/msg/Image[ignition.msgs.Image',
+            '/camera/depth_image@sensor_msgs/msg/Image[ignition.msgs.Image',
+            '/camera/camera_info@sensor_msgs/msg/CameraInfo[ignition.msgs.CameraInfo',
+            # simulator ground truth: the true pose of every model (not the wheel odometry)
+            '/world/default/pose/info@tf2_msgs/msg/TFMessage[ignition.msgs.Pose_V',
         ],
+        # the rgbd camera publishes colour, depth and one camera_info; the contract has separate names
+        remappings=[
+            ('/camera/image', '/camera/color/image'),
+            ('/camera/depth_image', '/camera/depth/image'),
+            ('/camera/camera_info', '/camera/color/camera_info'),
+            ('/world/default/pose/info', '/sim/ground_truth_poses'),
+        ],
+        output='screen'
+    )
+
+    # the depth image shares the colour camera's intrinsics (same rgbd sensor), so the same Gazebo
+    # camera_info is bridged a second time under the depth name (avoids a topic_tools dependency)
+    depth_info_bridge = Node(
+        package='ros_gz_bridge',
+        executable='parameter_bridge',
+        name='depth_info_bridge',
+        arguments=['/camera/camera_info@sensor_msgs/msg/CameraInfo[ignition.msgs.CameraInfo'],
+        remappings=[('/camera/camera_info', '/camera/depth/camera_info')],
         output='screen'
     )
 
@@ -98,14 +129,65 @@ def generate_launch_description():
         condition=IfCondition(use_drive_node)
     )
 
-    # simulation drive bridge (bridges /motor/* to /cmd_vel_sim)
+    # simulation drive bridge (reads /motor/* when drive_node runs, or /cmd_vel directly if use_drive_node:=false)
     sim_drive_bridge = Node(
         package='rover_description',
         executable='sim_drive_bridge.py',
         name='sim_drive_bridge',
         output='screen',
-        parameters=[{'use_sim_time': use_sim_time}],
-        condition=IfCondition(use_drive_node)
+        parameters=[{
+            'use_sim_time': use_sim_time,
+            'subscribe_cmd_vel': ParameterValue(
+                PythonExpression(["'false' if '", use_drive_node, "'.lower() == 'true' else 'true'"]),
+                value_type=bool,
+            ),
+        }],
+    )
+
+    # optional simulated autonomy sensor/state stack (sensor bridge -> rover_ekf -> NAVnode)
+    sim_sensor_bridge = Node(
+        package='rover_description',
+        executable='sim_sensor_bridge.py',
+        name='sim_sensor_bridge',
+        output='screen',
+        parameters=[{
+            'use_sim_time': use_sim_time,
+            'wheel_radius': 0.15,
+            'wheel_separation': 0.60,
+            'datum_latitude': 51.46,
+            'datum_longitude': -112.70,
+        }],
+        condition=IfCondition(use_sim_stack)
+    )
+
+    ekf_sim_node = Node(
+        package='rover_ekf',
+        executable='ekf_node',
+        name='rover_ekf_node',
+        output='screen',
+        parameters=[{
+            'use_sim_time': use_sim_time,
+            'wheel_radius': 0.15,
+            'imu_yaw_offset_deg': 0.0,
+            'datum_latitude': 51.46,
+            'datum_longitude': -112.70,
+            # Gazebo DiffDrive publishes odom -> base_footprint -> base_link; disable EKF TF broadcast in sim
+            'publish_tf': False,
+        }],
+        condition=IfCondition(use_sim_stack)
+    )
+
+    nav_sim_node = Node(
+        package='navigation_system',
+        executable='NAVnode',
+        name='NAVnode',
+        output='screen',
+        parameters=[{
+            'use_sim_time': use_sim_time,
+            'use_gps_fix_topic': True,
+            'gps_fix_topic': '/gps/fix',
+        }],
+        condition=IfCondition(use_sim_stack)
     )
 
     return LaunchDescription([
@@ -125,6 +207,16 @@ def generate_launch_description():
             description='Start drive_node and simulation bridge to control the rover'
         ),
         DeclareLaunchArgument(
+            'use_sim_stack',
+            default_value='false',
+            description='Start sim_sensor_bridge, rover_ekf (publish_tf:=false), and NAVnode (use_gps_fix_topic:=true)'
+        ),
+        DeclareLaunchArgument(
+            'gz_flags',
+            default_value='-r',
+            description="Gazebo flags: '-r' (GUI) or '-r -s --headless-rendering' (server only)"
+        ),
+        DeclareLaunchArgument(
             'world',
             default_value=default_world_path,
             description='Path to Modern Gazebo SDF world file'
@@ -134,7 +226,11 @@ def generate_launch_description():
         robot_state_publisher,
         spawn_entity,
         ros_gz_bridge,
+        depth_info_bridge,
         rviz_node,
         drive_node,
-        sim_drive_bridge
+        sim_drive_bridge,
+        sim_sensor_bridge,
+        ekf_sim_node,
+        nav_sim_node,
     ])

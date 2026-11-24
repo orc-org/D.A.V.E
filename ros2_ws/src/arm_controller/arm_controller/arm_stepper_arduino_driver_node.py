@@ -1,6 +1,8 @@
 import rclpy
 from rclpy.node import Node
-from rclpy.action import ActionServer
+from rclpy.action import ActionServer, CancelResponse
+from rclpy.callback_groups import ReentrantCallbackGroup
+from rclpy.executors import MultiThreadedExecutor
 from sensor_msgs.msg import JointState
 from std_msgs.msg import Float32
 from arm_interfaces.action import GripperCommand
@@ -27,6 +29,9 @@ class ArduinoStepperSerialDriver:
         self.last_reconnect_attempt = 0.0
         self.last_sent_cmd = ""
         self.last_sent_time = 0.0
+        self._connect_lock = threading.Lock()
+        self._io_lock = threading.Lock()
+        self._reconnecting = False
 
     def connect(self) -> bool:
         if not HAS_PYSERIAL:
@@ -34,77 +39,107 @@ class ArduinoStepperSerialDriver:
                 self.logger.warn("pyserial library is not installed (`pip install pyserial`). Serial driver inactive.")
             return False
 
+        new_ser = None
         try:
-            self.ser = serial.Serial(self.port, self.baudrate, timeout=0.1)
+            new_ser = serial.Serial(self.port, self.baudrate, timeout=0.1)
             time.sleep(1.5)  # Allow Arduino DTR reset / reboot delay
-            self.ser.reset_input_buffer()
-            self.ser.reset_output_buffer()
-            
-            # Send initial ping / handshake command
-            self.ser.write(b"PING\n")
-            time.sleep(0.05)
-            response = self.ser.read_all().decode('utf-8', errors='ignore')
-            
-            self.is_connected = True
+            with self._io_lock:
+                if self.ser and self.ser.is_open:
+                    try:
+                        self.ser.close()
+                    except Exception:
+                        pass
+                self.ser = new_ser
+                new_ser = None
+                self.ser.reset_input_buffer()
+                self.ser.reset_output_buffer()
+
+                # Send initial ping / handshake command
+                self.ser.write(b"PING\n")
+                time.sleep(0.05)
+                response = self.ser.read_all().decode('utf-8', errors='ignore')
+                self.is_connected = True
+
             if self.logger:
                 self.logger.info(f"Successfully connected to Arduino Stepper Controller on {self.port} @ {self.baudrate} baud. Response: {response.strip()}")
             return True
         except Exception as e:
-            self.is_connected = False
-            if self.ser and self.ser.is_open:
+            if new_ser and new_ser.is_open:
                 try:
-                    self.ser.close()
+                    new_ser.close()
                 except Exception:
                     pass
-            self.ser = None
+            with self._io_lock:
+                self.is_connected = False
+                if self.ser and self.ser.is_open:
+                    try:
+                        self.ser.close()
+                    except Exception:
+                        pass
+                self.ser = None
             if self.logger:
                 self.logger.warn(f"Failed to open USB serial port {self.port}: {e}")
             return False
 
     def auto_reconnect(self):
-        now = time.time()
-        if not self.is_connected and (now - self.last_reconnect_attempt > 3.0):
+        now = time.monotonic()
+        if not self.is_connected and not self._reconnecting and (now - self.last_reconnect_attempt > 3.0):
             self.last_reconnect_attempt = now
-            self.connect()
+            self._reconnecting = True
+
+            def _worker():
+                try:
+                    with self._connect_lock:
+                        self.connect()
+                finally:
+                    self._reconnecting = False
+
+            threading.Thread(target=_worker, daemon=True).start()
 
     def send_motor_command(self, arm_dir: int, arm_freq: float, grip_dir: int, grip_freq: float, force_send: bool = False):
         """
         Sends formatted motion command to Arduino: M <arm_dir> <arm_freq> <grip_dir> <grip_freq>\n
         """
-        if not self.is_connected or self.ser is None:
-            self.auto_reconnect()
-            if not self.is_connected:
-                return
-
+        need_reconnect = False
         cmd = f"M {int(arm_dir)} {int(arm_freq)} {int(grip_dir)} {int(grip_freq)}\n"
-        now = time.time()
+        now = time.monotonic()
 
-        # Send if command changed OR if 100ms passed (to maintain Arduino safety watchdog heartbeat)
-        if force_send or cmd != self.last_sent_cmd or (now - self.last_sent_time > 0.1):
-            try:
-                self.ser.write(cmd.encode('utf-8'))
-                self.last_sent_cmd = cmd
-                self.last_sent_time = now
-            except Exception as e:
-                self.is_connected = False
-                if self.logger:
-                    self.logger.error(f"Serial communication error sending command: {e}")
+        with self._io_lock:
+            if not self.is_connected or self.ser is None:
+                need_reconnect = True
+            elif force_send or cmd != self.last_sent_cmd or (now - self.last_sent_time > 0.1):
+                # Send if command changed OR if 100ms passed (to maintain Arduino safety watchdog heartbeat)
+                try:
+                    self.ser.write(cmd.encode('utf-8'))
+                    self.last_sent_cmd = cmd
+                    self.last_sent_time = now
+                except Exception as e:
+                    self.is_connected = False
+                    if self.logger:
+                        self.logger.error(f"Serial communication error sending command: {e}")
+
+        if need_reconnect:
+            self.auto_reconnect()
 
     def send_stop(self):
-        if self.is_connected and self.ser:
-            try:
-                self.ser.write(b"S\n")
-            except Exception:
-                pass
+        with self._io_lock:
+            if self.is_connected and self.ser:
+                try:
+                    self.ser.write(b"S\n")
+                except Exception:
+                    pass
 
     def close(self):
-        if self.ser and self.ser.is_open:
-            try:
-                self.send_stop()
-                self.ser.close()
-            except Exception:
-                pass
-        self.is_connected = False
+        with self._io_lock:
+            if self.ser and self.ser.is_open:
+                try:
+                    if self.is_connected:
+                        self.ser.write(b"S\n")
+                    self.ser.close()
+                except Exception:
+                    pass
+            self.ser = None
+            self.is_connected = False
 
 
 class ArmStepperArduinoDriverNode(Node):
@@ -186,11 +221,14 @@ class ArmStepperArduinoDriverNode(Node):
         # Gripper step tracking
         self.current_gripper_step = 0
         self.target_gripper_step = 0
-        self.current_gripper_pos = 0.0
-        self.target_gripper_pos = 0.0
+        self.current_gripper_pos = 1.0
+        self.target_gripper_pos = 1.0
 
-        self.last_control_time = time.time()
+        self.last_control_time = time.monotonic()
         self.last_log_time = 0.0
+
+        self._cb_group = ReentrantCallbackGroup()
+        self._hw_lock = threading.Lock()
 
         # ROS 2 Subscriptions & Publishers
         self.joint_sub = self.create_subscription(JointState, 'joint_states', self.joint_state_callback, 10)
@@ -198,7 +236,14 @@ class ArmStepperArduinoDriverNode(Node):
         self.gripper_manual_vel_sub = self.create_subscription(Float32, '/gripper_manual_vel', self.gripper_manual_vel_callback, 10)
         self.gripper_state_pub = self.create_publisher(Float32, '/gripper_state', 10)
         self.gripper_target_sub = self.create_subscription(Float32, '/gripper_target', self.gripper_target_callback, 10)
-        self.gripper_action_server = ActionServer(self, GripperCommand, 'gripper_command', self.execute_gripper_goal)
+        self.gripper_action_server = ActionServer(
+            self,
+            GripperCommand,
+            'gripper_command',
+            execute_callback=self.execute_gripper_goal,
+            cancel_callback=lambda goal_handle: CancelResponse.ACCEPT,
+            callback_group=self._cb_group,
+        )
 
         self.manual_vel_input = 0.0
         self.last_manual_vel_time = 0.0
@@ -206,7 +251,7 @@ class ArmStepperArduinoDriverNode(Node):
         self.last_gripper_manual_vel_time = 0.0
 
         # 50Hz high-speed control loop
-        self.control_timer = self.create_timer(0.02, self.control_and_step_loop)
+        self.control_timer = self.create_timer(0.02, self.control_and_step_loop, callback_group=self._cb_group)
 
         self.get_logger().info('Arm & Gripper Arduino USB Serial Stepper Node Running.')
         self.get_logger().info(f'Arm conversion: {self.arm_steps_per_rad:.2f} steps/rad | Step Freq: {self.arm_step_freq_hz/1000:.1f} kHz')
@@ -216,21 +261,21 @@ class ArmStepperArduinoDriverNode(Node):
 
     def publish_gripper_state(self):
         max_gripper_stroke_steps = max(1.0, float(self.gripper_steps_per_m * 0.2))
-        self.current_gripper_pos = max(0.0, min(1.0, float(self.current_gripper_step) / max_gripper_stroke_steps))
+        self.current_gripper_pos = max(0.0, min(1.0, 1.0 - (float(self.current_gripper_step) / max_gripper_stroke_steps)))
         state_msg = Float32()
         state_msg.data = float(self.current_gripper_step)
         self.gripper_state_pub.publish(state_msg)
 
     def manual_vel_callback(self, msg):
         self.manual_vel_input = msg.data
-        self.last_manual_vel_time = time.time()
+        self.last_manual_vel_time = time.monotonic()
 
     def gripper_manual_vel_callback(self, msg):
         self.gripper_manual_vel_input = msg.data
-        self.last_gripper_manual_vel_time = time.time()
+        self.last_gripper_manual_vel_time = time.monotonic()
 
     def joint_state_callback(self, msg):
-        now_time = time.time()
+        now_time = time.monotonic()
         if (now_time - self.last_manual_vel_time < 0.4) and (abs(self.manual_vel_input) > 0.01):
             return
         if 'arm_joint' in msg.name:
@@ -239,10 +284,16 @@ class ArmStepperArduinoDriverNode(Node):
             self.target_arm_step = int(self.target_arm_angle * self.arm_steps_per_rad)
 
     def gripper_target_callback(self, msg):
-        self.target_gripper_step = int(msg.data)
+        with self._hw_lock:
+            self.target_gripper_step = int(msg.data)
+
+    def _halt_gripper_motion(self):
+        with self._hw_lock:
+            self.target_gripper_step = self.current_gripper_step
+            self.target_gripper_pos = self.current_gripper_pos
 
     def control_and_step_loop(self):
-        now_time = time.time()
+        now_time = time.monotonic()
         dt = now_time - self.last_control_time
         self.last_control_time = now_time
 
@@ -256,17 +307,16 @@ class ArmStepperArduinoDriverNode(Node):
         is_manual_active = (now_time - self.last_manual_vel_time < 0.4) and (abs(self.manual_vel_input) > 0.01)
 
         if is_manual_active:
-            # Positive velocity = ARM UP (Forward), Negative velocity = ARM DOWN (Reverse)
-            step_dir = 1 if self.manual_vel_input > 0 else -1
-            if self.arm_invert_dir:
-                step_dir = -step_dir
+            # Keep logical software joint angle positive-up regardless of hardware wiring polarity
+            logical_dir = 1 if self.manual_vel_input > 0 else -1
+            hw_dir = -logical_dir if self.arm_invert_dir else logical_dir
 
             angle_added = abs(self.manual_vel_input) * dt
-            proposed_angle = self.current_arm_angle + (step_dir * angle_added)
+            proposed_angle = self.current_arm_angle + (logical_dir * angle_added)
             proposed_step = int(proposed_angle * self.arm_steps_per_rad)
 
             if proposed_step != self.current_arm_step:
-                arm_cmd_dir = step_dir
+                arm_cmd_dir = hw_dir
                 arm_cmd_freq = self.arm_step_freq_hz
             else:
                 arm_cmd_dir = 0
@@ -280,58 +330,52 @@ class ArmStepperArduinoDriverNode(Node):
             # Position tracking mode via /joint_states
             arm_step_diff = self.target_arm_step - self.current_arm_step
             if abs(arm_step_diff) > 2:
-                step_dir = 1 if arm_step_diff > 0 else -1
-                if self.arm_invert_dir:
-                    step_dir = -step_dir
-
-                arm_cmd_dir = step_dir
+                logical_dir = 1 if arm_step_diff > 0 else -1
+                arm_cmd_dir = -logical_dir if self.arm_invert_dir else logical_dir
                 arm_cmd_freq = self.arm_step_freq_hz
 
                 max_steps_sec = self.arm_max_vel * self.arm_steps_per_rad
                 steps_added = int(max_steps_sec * dt)
                 steps_to_move = min(abs(arm_step_diff), max(1, steps_added))
-                self.current_arm_step += (1 if arm_step_diff > 0 else -1) * steps_to_move
+                self.current_arm_step += logical_dir * steps_to_move
                 self.current_arm_angle = self.current_arm_step / self.arm_steps_per_rad
             else:
                 arm_cmd_dir = 0
                 arm_cmd_freq = 0.0
 
         # Process Gripper Stepper Motor
-        is_gripper_manual_active = (now_time - self.last_gripper_manual_vel_time < 0.4) and (abs(self.gripper_manual_vel_input) > 0.01)
+        with self._hw_lock:
+            is_gripper_manual_active = (now_time - self.last_gripper_manual_vel_time < 0.4) and (abs(self.gripper_manual_vel_input) > 0.01)
 
-        if is_gripper_manual_active:
-            step_dir = 1 if self.gripper_manual_vel_input > 0 else -1
-            if self.gripper_invert_dir:
-                step_dir = -step_dir
-
-            max_gripper_sec = self.gripper_max_vel * self.gripper_steps_per_m
-            steps_added = int(max_gripper_sec * dt)
-            steps_to_move = max(1, steps_added)
-
-            self.current_gripper_step += step_dir * steps_to_move
-            self.target_gripper_step = self.current_gripper_step
-
-            grip_cmd_dir = step_dir
-            grip_cmd_freq = self.gripper_step_freq_hz
-            self.publish_gripper_state()
-        else:
-            gripper_step_diff = self.target_gripper_step - self.current_gripper_step
-            if abs(gripper_step_diff) > 2:
-                step_dir = 1 if gripper_step_diff > 0 else -1
-                if self.gripper_invert_dir:
-                    step_dir = -step_dir
-
-                grip_cmd_dir = step_dir
-                grip_cmd_freq = self.gripper_step_freq_hz
+            if is_gripper_manual_active:
+                logical_dir = 1 if self.gripper_manual_vel_input > 0 else -1
+                hw_dir = -logical_dir if self.gripper_invert_dir else logical_dir
 
                 max_gripper_sec = self.gripper_max_vel * self.gripper_steps_per_m
                 steps_added = int(max_gripper_sec * dt)
-                steps_to_move = min(abs(gripper_step_diff), max(1, steps_added))
-                self.current_gripper_step += (1 if gripper_step_diff > 0 else -1) * steps_to_move
+                steps_to_move = max(1, steps_added)
+
+                self.current_gripper_step += logical_dir * steps_to_move
+                self.target_gripper_step = self.current_gripper_step
+
+                grip_cmd_dir = hw_dir
+                grip_cmd_freq = self.gripper_step_freq_hz
                 self.publish_gripper_state()
             else:
-                grip_cmd_dir = 0
-                grip_cmd_freq = 0.0
+                gripper_step_diff = self.target_gripper_step - self.current_gripper_step
+                if abs(gripper_step_diff) > 2:
+                    logical_dir = 1 if gripper_step_diff > 0 else -1
+                    grip_cmd_dir = -logical_dir if self.gripper_invert_dir else logical_dir
+                    grip_cmd_freq = self.gripper_step_freq_hz
+
+                    max_gripper_sec = self.gripper_max_vel * self.gripper_steps_per_m
+                    steps_added = int(max_gripper_sec * dt)
+                    steps_to_move = min(abs(gripper_step_diff), max(1, steps_added))
+                    self.current_gripper_step += logical_dir * steps_to_move
+                    self.publish_gripper_state()
+                else:
+                    grip_cmd_dir = 0
+                    grip_cmd_freq = 0.0
 
         # Send command frame over USB Serial to Arduino
         if self.use_hardware_serial:
@@ -352,20 +396,39 @@ class ArmStepperArduinoDriverNode(Node):
             )
 
     def execute_gripper_goal(self, goal_handle):
-        target_pos = max(0.0, min(1.0, goal_handle.request.position))
-        self.target_gripper_pos = target_pos
-        finger_linear_pos = (1.0 - self.target_gripper_pos) * 0.2
-        self.target_gripper_step = int(finger_linear_pos * self.gripper_steps_per_m)
+        target_pos = max(0.0, min(1.0, float(goal_handle.request.position)))
+        with self._hw_lock:
+            self.target_gripper_pos = target_pos
+            finger_linear_pos = (1.0 - self.target_gripper_pos) * 0.2
+            self.target_gripper_step = int(finger_linear_pos * self.gripper_steps_per_m)
 
         self.get_logger().info(f'Action Gripper Command received: moving to target pos {target_pos:.2f}')
 
         feedback_msg = GripperCommand.Feedback()
-        rate = self.create_rate(10)
+        deadline = time.monotonic() + 15.0
 
-        while abs(self.current_gripper_pos - target_pos) > 0.01:
+        while rclpy.ok() and abs(self.current_gripper_pos - target_pos) > 0.01:
+            if goal_handle.is_cancel_requested:
+                self._halt_gripper_motion()
+                goal_handle.canceled()
+                result = GripperCommand.Result()
+                result.success = False
+                return result
+            if time.monotonic() > deadline:
+                self._halt_gripper_motion()
+                goal_handle.abort()
+                result = GripperCommand.Result()
+                result.success = False
+                return result
             feedback_msg.progress = float(self.current_gripper_pos)
             goal_handle.publish_feedback(feedback_msg)
-            rate.sleep()
+            time.sleep(0.1)
+
+        if not rclpy.ok():
+            self._halt_gripper_motion()
+            result = GripperCommand.Result()
+            result.success = False
+            return result
 
         goal_handle.succeed()
         result = GripperCommand.Result()
@@ -381,11 +444,14 @@ class ArmStepperArduinoDriverNode(Node):
 def main(args=None):
     rclpy.init(args=args)
     node = ArmStepperArduinoDriverNode()
+    executor = MultiThreadedExecutor()
+    executor.add_node(node)
     try:
-        rclpy.spin(node)
+        executor.spin()
     except KeyboardInterrupt:
         pass
     finally:
+        executor.shutdown()
         node.destroy_node()
         rclpy.shutdown()
 

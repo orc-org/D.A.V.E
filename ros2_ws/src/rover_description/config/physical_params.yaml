@@ -20,3 +20,37 @@ robot_dimensions:
   mount_length: 0.30
   arm_length: 0.45
   tool_tip_length: 0.15
+
+# simulated perception sensors (urdf/sensors.xacro); see docs/slam/architecture.md for the topic contract
+sensors:
+  # LiDAR modelled on the Unitree L2: 360 x 96 deg, 30 m, ~64k points/s
+  lidar_x: 0.0
+  lidar_y: 0.0
+  lidar_z: 0.20          # above the chassis top
+  lidar_rate_hz: 10
+  lidar_h_samples: 360   # 360 x 16 x 10 Hz = 57.6k points/s, close to the L2 effective rate
+  lidar_v_samples: 16
+  lidar_v_fov_deg: 96.0
+  lidar_max_range: 30.0
+  lidar_noise_std: 0.02  # metres, from the L2 datasheet +-2 cm
+  imu_rate_hz: 200
+  # IMU noise (Gazebo Gaussian model, per axis). ASSUMED consumer-MEMS values, pessimistic for vibration;
+  # not from the L2 datasheet. Set all to 0 for a perfect IMU. stddev = white noise per sample;
+  # bias = constant offset drawn at start (mean +- stddev); dynamic bias = slow random walk.
+  imu_gyro_noise_std: 0.002          # rad/s per sample at 200 Hz
+  imu_gyro_bias_mean: 0.003          # rad/s (about 0.17 deg/s)
+  imu_gyro_bias_std: 0.001           # rad/s
+  imu_gyro_dyn_bias_std: 0.0002      # rad/s
+  imu_accel_noise_std: 0.03          # m/s^2 per sample
+  imu_accel_bias_mean: 0.05          # m/s^2
+  imu_accel_bias_std: 0.02           # m/s^2
+  imu_accel_dyn_bias_std: 0.002      # m/s^2
+  imu_dyn_bias_corr_time: 300.0      # s
+  # generic depth camera (model not chosen yet)
+  camera_z: 0.10
+  camera_rate_hz: 15
+  camera_hfov_rad: 1.2
+  camera_width: 640
+  camera_height: 480
+  camera_near: 0.2
+  camera_far: 8.0

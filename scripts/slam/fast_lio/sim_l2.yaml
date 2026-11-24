@@ -1,0 +1,55 @@
+# FAST-LIO2 (hku-mars/FAST_LIO, ROS2 branch) parameters for the SIMULATED L2-like sensor
+# (rover_description/urdf/sensors.xacro: 16 rings x 360, 10 Hz, 30 m, IMU 200 Hz 2 cm below the LiDAR).
+# Input: /lidar/points_timed from scripts/slam/lidar_point_time.py (adds the `time` field).
+# For the real Unitree L2 see the notes at the end; nothing here is tuned on real data yet.
+/**:
+    ros__parameters:
+        feature_extract_enable: false
+        point_filter_num: 2            # keep every 2nd point (the sim cloud is small: <= 5760 points)
+        max_iteration: 3
+        filter_size_surf: 0.3
+        filter_size_map: 0.3
+        cube_side_length: 200.0
+        runtime_pos_log_enable: false  # true writes debug logs into the FAST_LIO source tree
+        map_file_path: ""
+
+        common:
+            lid_topic:  "/lidar/points_timed"
+            imu_topic:  "/lidar/imu"
+            time_sync_en: false
+            time_offset_lidar_to_imu: 0.0
+
+        preprocess:
+            lidar_type: 2              # 2 = Velodyne-style fields: x y z intensity time ring (as the L2 driver)
+            scan_line: 16
+            scan_rate: 10
+            timestamp_unit: 0          # `time` in seconds
+            blind: 0.5                 # ignore returns within 0.5 m (rover body)
+
+        mapping:
+            acc_cov: 0.1
+            gyr_cov: 0.1
+            b_acc_cov: 0.0001
+            b_gyr_cov: 0.0001
+            fov_degree: 360.0
+            det_range: 30.0
+            extrinsic_est_en: false
+            extrinsic_T: [0.0, 0.0, 0.02]   # LiDAR origin in the IMU frame (IMU is 2 cm below, same axes)
+            extrinsic_R: [1., 0., 0.,
+                          0., 1., 0.,
+                          0., 0., 1.]
+
+        publish:
+            path_en: true
+            scan_publish_en: true
+            dense_publish_en: false
+            scan_bodyframe_pub_en: false
+
+        pcd_save:
+            pcd_save_en: false         # true writes a PCD into the FAST_LIO package folder
+            interval: -1
+
+# Real Unitree L2 (to verify on the sensor): lid_topic = the driver's cloud (frame unilidar_lidar),
+# imu_topic = its IMU (frame unilidar_imu), scan_line 18, scan_rate per the configured rotation rate,
+# timestamp_unit per the driver's `time` field (seconds in the SDK's ROS 2 point type), det_range ~30,
+# extrinsic_T/R from the L2 manual (LiDAR to built-in IMU), and set use_sim_time false.

@@ -268,8 +268,8 @@ bool ListOfWaypoints::removePoint(double x, double y) {
             return true;
         }
         current = current->next;
-        return false;
     }
+    return false;   // reached the end of the list without a match
 }
 
 bool ListOfWaypoints::removeGeodeticPoint(double latitude, double longitude) {

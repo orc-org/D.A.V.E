@@ -2,13 +2,28 @@
 #include "sensor_msgs/msg/joy.hpp"
 #include "std_msgs/msg/float32.hpp"
 #include "geometry_msgs/msg/twist.hpp"
+#include "std_msgs/msg/string.hpp"
+#include "drive_package/drive_math.hpp"
 #include <algorithm>
+#include <string>
 
 class JoyDrive : public rclcpp::Node
 {
 public:
     JoyDrive() : Node("drive_node")
     {
+        this->declare_parameter<bool>("right_trigger_forward", true);
+        this->declare_parameter<bool>("cmd_vel_is_si", true);
+        this->declare_parameter<double>("wheel_separation", 0.60);
+        this->declare_parameter<double>("max_wheel_speed", 1.0);
+        this->declare_parameter<double>("joy_deadzone", 0.05);
+
+        right_trigger_forward_ = this->get_parameter("right_trigger_forward").as_bool();
+        cmd_vel_is_si_ = this->get_parameter("cmd_vel_is_si").as_bool();
+        wheel_separation_ = this->get_parameter("wheel_separation").as_double();
+        max_wheel_speed_ = this->get_parameter("max_wheel_speed").as_double();
+        joy_deadzone_ = static_cast<float>(this->get_parameter("joy_deadzone").as_double());
+
         rclcpp::QoS sub_qos(10);
         sub_qos.reliable();
         sub_qos.durability_volatile();
@@ -21,123 +36,143 @@ public:
             "/cmd_vel", sub_qos,
             std::bind(&JoyDrive::cmdVelCallback, this, std::placeholders::_1));
 
+        mode_sub_ = this->create_subscription<std_msgs::msg::String>(
+            "/control_mode", 10,
+            std::bind(&JoyDrive::modeCallback, this, std::placeholders::_1));
+
+        sensitivity_sub_ = this->create_subscription<std_msgs::msg::String>(
+            "/sensitivity", 10,
+            std::bind(&JoyDrive::sensitivityCallback, this, std::placeholders::_1));
+
         rclcpp::QoS pub_qos(10);
         pub_qos.reliable();
         pub_qos.durability_volatile();
 
-        front_left_pub_  = this->create_publisher<std_msgs::msg::Float32>("/motor/front_left", pub_qos); 
+        front_left_pub_  = this->create_publisher<std_msgs::msg::Float32>("/motor/front_left", pub_qos);
         front_right_pub_ = this->create_publisher<std_msgs::msg::Float32>("/motor/front_right", pub_qos);
         rear_left_pub_   = this->create_publisher<std_msgs::msg::Float32>("/motor/rear_left", pub_qos);
         rear_right_pub_  = this->create_publisher<std_msgs::msg::Float32>("/motor/rear_right", pub_qos);
 
-        RCLCPP_INFO(this->get_logger(), "Drive node running (QoS Mismatch Protection Active)");
+        RCLCPP_INFO(
+            this->get_logger(),
+            "Drive node running (cmd_vel_is_si=%s, right_trigger_forward=%s, wheel_sep=%.2f m, max_wheel=%.2f m/s)",
+            cmd_vel_is_si_ ? "true" : "false",
+            right_trigger_forward_ ? "true" : "false",
+            wheel_separation_,
+            max_wheel_speed_);
     }
 
 private:
-    void joyCallback(const sensor_msgs::msg::Joy::SharedPtr msg)
+    void modeCallback(const std_msgs::msg::String::SharedPtr msg)
     {
-        // Grabbing Controller Inputs
-        float steering = msg->axes[0];   // left stick (X axis only for left/right)
-        float lt_raw = msg->axes[4];     // left trigger
-        float rt_raw = msg->axes[5];     // right trigger
-
-        //Variables to be defined later
-        float left = 0.0f;
-        float right = 0.0f;
-        float spin = 0.0f;
-
-        // Checking to see what is being picked up from controller (Not required, but made debugging much easier)
-        RCLCPP_INFO(this->get_logger(), "\n\n\tController Inputs (For Debugging): \n\n Left Trigger: %.3f, Right Trigger: %.3f, LStick X Direction: %.3f\n", lt_raw, rt_raw, steering);
-
-        // NORMALIZE trigger inputs (released=1, pressed=-1 → 0..1)
-        float lt_norm = (1.0f - lt_raw) * 0.5f;   // backward  (0..1)
-        float rt_norm = (1.0f - rt_raw) * 0.5f;   // forward   (0..1)
-        
-        // Combines it into Throttle to send to motor drivers (for variable speeds)
-        float throttle = rt_norm - lt_norm;            // -1..1
-        
-        // Makes a deadzone to hopefully stop all the fluctuating values Im getting
-        float deadzone = 0.05f;           // 5% deadzone around 0
-        if (std::abs(throttle) < deadzone) {
-            throttle = 0.0f;               
+        current_mode_ = msg->data;
+        RCLCPP_INFO(this->get_logger(), "Drive mode changed to: %s", current_mode_.c_str());
+        if (current_mode_ != "drive") {
+            publishWheelPair({0.0f, 0.0f});
         }
-        
-        // If triggers are held
+    }
 
-        if (throttle !=0.0f) {
-        // --- Power Mixing ---
-        left  = throttle * (1.0f - steering);
-        right = throttle * (1.0f + steering);
+    void sensitivityCallback(const std_msgs::msg::String::SharedPtr msg)
+    {
+        if (msg->data == "ultra") {
+            sensitivity_ = 0.25f;
+        } else if (msg->data == "fine") {
+            sensitivity_ = 0.5f;
+        } else if (msg->data == "coarse") {
+            sensitivity_ = 1.0f;
+        } else {
+            RCLCPP_WARN(this->get_logger(), "Ignoring unknown /sensitivity preset: '%s'", msg->data.c_str());
+            return;
         }
 
-        // Fail-safe spin maneuver Will make only stick input spin rover.
-        // (incase one side is not on flat terrain and trying to turn)
-        else{
+        RCLCPP_INFO(this->get_logger(), "Sensitivity changed to %s (%.2f)", msg->data.c_str(), sensitivity_);
+    }
 
-            spin = steering;
-            //Adds deadzone that only affects the spinning (hopefully)
-            if (std::abs(spin) < deadzone) {
-                spin = 0.0f;               
-            }
-
-            left = -spin;
-            right = spin;
-        }
-
-        // Clamp makes sure that our power outputs to motors never go above 100%
-        left  = std::clamp(left,  -1.0f, 1.0f);
-        right = std::clamp(right, -1.0f, 1.0f);
-        // Could also use these to adjust sensitivity of movement instead of adaptive trigger resistance
-        // (Would just cap acceleration to like 50%, make it so bumpers inc/dec the clamp values)
-
-        // Send stuff to the topics
+    void publishWheelPair(const drive_package::WheelPair &wheels)
+    {
         std_msgs::msg::Float32 flmsg, frmsg, rlmsg, rrmsg;
-        flmsg.data = left;
-        rlmsg.data = left;
-        frmsg.data = right;
-        rrmsg.data = right;
+        flmsg.data = wheels.left;
+        rlmsg.data = wheels.left;
+        frmsg.data = wheels.right;
+        rrmsg.data = wheels.right;
 
         front_left_pub_->publish(flmsg);
         front_right_pub_->publish(frmsg);
         rear_left_pub_->publish(rlmsg);
         rear_right_pub_->publish(rrmsg);
-        
-        // Tells user the power % to each motor
-        RCLCPP_INFO(this->get_logger(), "\n\n\tMotor Power Levels: \n\nFront Left: %d%% | Front Right: %d%%\nRear Left:  %d%% | Rear Right:  %d%%\n", 
-                    static_cast<int>(left*100.0), static_cast<int>(right*100.0),
-                    static_cast<int>(left*100.0), static_cast<int>(right*100.0));
+    }
 
+    void joyCallback(const sensor_msgs::msg::Joy::SharedPtr msg)
+    {
+        if (current_mode_ != "drive") {
+            return;
+        }
+        if (msg->axes.size() < 6) {
+            RCLCPP_WARN_THROTTLE(
+                this->get_logger(), *this->get_clock(), 2000,
+                "Ignoring /joy message with %zu axes (expected >= 6); stopping wheels.",
+                msg->axes.size());
+            publishWheelPair({0.0f, 0.0f});
+            return;
+        }
+
+        const float steering = msg->axes[0];
+        const float lt_raw = msg->axes[4];
+        const float rt_raw = msg->axes[5];
+        RCLCPP_DEBUG(
+            this->get_logger(),
+            "Controller Inputs: LT=%.3f RT=%.3f LStickX=%.3f",
+            lt_raw, rt_raw, steering);
+
+        const auto wheels = drive_package::mixJoystickCommand(
+            lt_raw, rt_raw, steering, sensitivity_, joy_deadzone_, right_trigger_forward_);
+        if (std::abs(wheels.left) > 1e-4f || std::abs(wheels.right) > 1e-4f) {
+            last_active_joy_time_ = steady_.now();
+        }
+        publishWheelPair(wheels);
+
+        RCLCPP_INFO_THROTTLE(
+            this->get_logger(), *this->get_clock(), 1000,
+            "Motor Power Levels: L=%d%% | R=%d%%",
+            static_cast<int>(wheels.left * 100.0f),
+            static_cast<int>(wheels.right * 100.0f));
     }
 
     void cmdVelCallback(const geometry_msgs::msg::Twist::SharedPtr msg)
     {
-        float throttle = msg->linear.x;
-        float steering = msg->angular.z;
+        if (current_mode_ != "drive") {
+            return;
+        }
+        // Let an active physical /joy controller win over idle zero /cmd_vel heartbeats (e.g. from open dashboard tab)
+        const bool is_zero_twist = std::abs(msg->linear.x) < 1e-3 && std::abs(msg->angular.z) < 1e-3;
+        if (is_zero_twist && (steady_.now() - last_active_joy_time_).seconds() < 0.4) {
+            return;
+        }
 
-        // Simple skid-steer mixing
-        float left = throttle - steering;
-        float right = throttle + steering;
+        const auto wheels = drive_package::mixTwistCommand(
+            msg->linear.x, msg->angular.z, sensitivity_,
+            cmd_vel_is_si_, wheel_separation_, max_wheel_speed_);
+        publishWheelPair(wheels);
 
-        left  = std::clamp(left,  -1.0f, 1.0f);
-        right = std::clamp(right, -1.0f, 1.0f);
-
-        std_msgs::msg::Float32 flmsg, frmsg, rlmsg, rrmsg;
-        flmsg.data = left;
-        rlmsg.data = left;
-        frmsg.data = right;
-        rrmsg.data = right;
-
-        front_left_pub_->publish(flmsg);
-        front_right_pub_->publish(frmsg);
-        rear_left_pub_->publish(rlmsg);
-        rear_right_pub_->publish(rrmsg);
-
-        RCLCPP_INFO_THROTTLE(this->get_logger(), *this->get_clock(), 1000,
-            "cmd_vel -> Left Wheels: %.2f | Right Wheels: %.2f", left, right);
+        RCLCPP_INFO_THROTTLE(
+            this->get_logger(), *this->get_clock(), 1000,
+            "cmd_vel -> Left Wheels: %.2f | Right Wheels: %.2f", wheels.left, wheels.right);
     }
+
+    bool right_trigger_forward_ = true;
+    bool cmd_vel_is_si_ = true;
+    double wheel_separation_ = 0.60;
+    double max_wheel_speed_ = 1.0;
+    float joy_deadzone_ = 0.05f;
+    std::string current_mode_ = "drive";
+    float sensitivity_ = 1.0f;
+    rclcpp::Clock steady_{RCL_STEADY_TIME};
+    rclcpp::Time last_active_joy_time_{0, 0, RCL_STEADY_TIME};
 
     rclcpp::Subscription<sensor_msgs::msg::Joy>::SharedPtr joy_sub_;
     rclcpp::Subscription<geometry_msgs::msg::Twist>::SharedPtr cmd_vel_sub_;
+    rclcpp::Subscription<std_msgs::msg::String>::SharedPtr mode_sub_;
+    rclcpp::Subscription<std_msgs::msg::String>::SharedPtr sensitivity_sub_;
     rclcpp::Publisher<std_msgs::msg::Float32>::SharedPtr front_left_pub_;
     rclcpp::Publisher<std_msgs::msg::Float32>::SharedPtr front_right_pub_;
     rclcpp::Publisher<std_msgs::msg::Float32>::SharedPtr rear_left_pub_;

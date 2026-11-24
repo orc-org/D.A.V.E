@@ -23,6 +23,11 @@ show_help() {
 while [[ $# -gt 0 ]]; do
     case "$1" in
         -p|--port)
+            # without this check "-p" as the last argument made 'shift 2' fail and the loop spin forever
+            if [[ $# -lt 2 || ! "$2" =~ ^[0-9]+$ ]]; then
+                echo "Option $1 needs a numeric port"
+                exit 1
+            fi
             PORT="$2"
             shift 2
             ;;
@@ -53,29 +58,29 @@ echo "Expected Codec: $CODEC"
 echo "Diagnostics:    $DIAGNOSTICS"
 echo "=========================================="
 
-# construct caps and decoding elements based on selection
+command -v gst-launch-1.0 >/dev/null 2>&1 || { echo "gst-launch-1.0 not found (sudo apt install gstreamer1.0-tools gstreamer1.0-plugins-good gstreamer1.0-libav)"; exit 1; }
+
+# Build the pipeline as an argument array. The previous version joined it into a string and
+# ran it through eval, which broke on the quoted video-sink value and on odd input.
 if [ "$CODEC" = "h264" ]; then
     CAPS="application/x-rtp,media=video,clock-rate=90000,encoding-name=H264,payload=96"
-    DECODER="rtph264depay ! h264parse ! avdec_h264"
+    DECODER=(rtph264depay ! h264parse ! avdec_h264)
 else
     CAPS="application/x-rtp,media=video,clock-rate=90000,encoding-name=JPEG,payload=26"
-    DECODER="rtpjpegdepay ! jpegdec"
+    DECODER=(rtpjpegdepay ! jpegdec)
 fi
 
-# construct sink based on diagnostic mode
 if [ "$DIAGNOSTICS" = true ]; then
-    # displays timing diagnostics overlay
-    SINK="fpsdisplaysink video-sink=\"autovideosink sync=false\" sync=false"
+    # fpsdisplaysink overlays the frame rate
+    # (no spaces inside an argument: gst-launch would escape them and mis-parse the property)
+    SINK=(fpsdisplaysink video-sink=autovideosink sync=false)
 else
-    # directly displays window with zero rendering delay
-    SINK="autovideosink sync=false"
+    SINK=(autovideosink sync=false)
 fi
 
-# full GStreamer command
-PIPELINE="gst-launch-1.0 -v udpsrc port=$PORT ! $CAPS ! rtpjitterbuffer latency=0 drop-on-latency=true ! $DECODER ! videoconvert ! $SINK"
+PIPELINE=(udpsrc port="$PORT" ! "$CAPS" ! rtpjitterbuffer latency=0 drop-on-latency=true ! "${DECODER[@]}" ! videoconvert ! "${SINK[@]}")
 
-echo "Executing GStreamer pipeline:"
-echo "$PIPELINE"
+echo "Executing: gst-launch-1.0 -v ${PIPELINE[*]}"
 echo ""
 
-eval $PIPELINE
+exec gst-launch-1.0 -v "${PIPELINE[@]}"

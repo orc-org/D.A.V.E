@@ -1,0 +1,104 @@
+# Project and code review (2026-11-15)
+
+A full pass over the ROS 2 workspace, scripts and dashboard, judged against the CIRC 2027 tasks ([competition.md](competition.md)) and the SLAM plan ([slam/README.md](slam/README.md)). Everything here is local and not pushed.
+
+**Verdict in one paragraph.** Teleoperation (drive, cameras, dashboard, arm by hand) is in workable shape. Nothing in the repository can yet drive the rover by itself: there is no closed-loop controller, the navigation node computes range and bearing but publishes no motion, the position estimate is GNSS-only for navigation, and the two estimators (`rover_ekf`, the IMU AUKF) disagree on frames and origins. The Demolition task (autonomous) and the Meteorite task (no GNSS) therefore need the SLAM work, a controller and a few safety features before they are possible. The NAVnode bugs that made it unusable with a real receiver are fixed and covered by a test.
+
+## Fixed in this review
+
+Details are in [known-issues.md §1](known-issues.md#1-fixed-while-consolidating-local-changes-not-pushed). Summary:
+
+| Component | Fix | Verified by |
+|---|---|---|
+| `NAVnode` NMEA parsing | RMC/GGA/VTG split into fields; RMC no longer discards the buffer; speed (knots → km/h), course and date are read | `scripts/tests/navnode_nmea_smoke_test.sh` (11/11 pass): speed 18.52 km/h from 10 kn |
+| `NAVnode` serial | Bytes kept across 200 ms ticks; speed/heading held between sentences | same test (speed was 0 before) |
+| `NAVnode` targeting | A waypoint added after start-up becomes the target; removed/cleared targets are dropped; end of route is remembered | same test: range 10.2 m to a waypoint 10 m east of home (was 10¹² m) |
+| `NAVnode` track log | Stores copies (was a dangling pointer and a double free); logs each point | built; shutdown path not exercised by the test |
+| `NAVnode` services | `removeLastWaypoint` checks the route it edits; route-select success message is set | code read |
+| `rover_ekf` | Yaw-only IMU update (the 3-row update compared roll/pitch with x/y); `use_gps:=false` for GNSS-denied runs | unit run: yaw converges to 90.0°, P stays positive definite; with `use_gps:=false` there is no `/gps/fix` subscription |
+
+## Open findings by severity
+
+**Critical** = can hurt the rover or people, or makes a task impossible. **Major** = wrong results. **Minor** = cleanup.
+
+### Safety and drive
+
+| Sev. | Finding | Where | Task impact |
+|---|---|---|---|
+| ~~Critical~~ Fixed | **No command timeout (deadman).** `vesc_can_driver_node` held the last target forever, so a dropped Wi-Fi link or a crashed dashboard left the rover driving. It now stops any wheel whose command is older than `command_timeout` (0.5 s), immediately and without ramping ([drive-system.md](drive-system.md)). Tested in WSL without a CAN bus: no stop while commands arrive at 10 Hz, and a stop after the publisher ends. | `drive_package/src/vesc_can_driver_node.cpp` | All tasks; required before any autonomy |
+| ~~Critical~~ Fixed | **`motion_coordinator` published `cmd_vel` in auto mode**, so the arm node could drive the rover on a base pose made up from commands × 3.0. Base motion now needs `allow_base_motion:=true`; otherwise auto mode moves the arm only. The base pose comes from `/ekf/odometry` when it is fresh. It also no longer imports matplotlib at load (the node failed where it is not installed) and skips a zero `dt`. Tested in WSL: auto mode published 0 `cmd_vel` messages. | `arm_controller/.../motion_coordinator_node.py` | All tasks |
+| ~~Major~~ Updated | Historical 2026-11-15 finding: `/cmd_vel` was normalised (−1…1) while `vesc_can_driver_node` defaulted `wheel_radius = 0.10 m`. **Updated:** `/cmd_vel` is now SI `(m/s, rad/s)`, `max_erpm` is clamped in metric mode, and both `vesc_can_driver_node` and `rover_ekf` read `wheel_radius = 0.15 m` from `physical_params.yaml`; measuring the physical tires outdoors remains open. | `vesc_can_driver_node.cpp`, `ekf_node.py` | Odometry and any controller tuning |
+| ~~Major~~ Fixed (enable on VESCs) | No VESC status readback, so no wheel odometry. The driver now reads each VESC's CAN STATUS frame and publishes `/wheel_states` (wheel rad/s, motor current); `rover_ekf` prefers it over commands. Needs CAN status STATUS 1 enabled in VESC Tool and a sign check ([drive-system.md](drive-system.md)). Tested on a virtual CAN bus in WSL. | `vesc_can_driver_node.cpp`, `ekf_node.py` | SLAM (wheel prior), Meteorite |
+| ~~Minor~~ Fixed | Both drive nodes logged at INFO on every message (20 Hz from `/joy`). Now DEBUG or throttled to 1 Hz. | `drive_node.cpp`, `vesc_can_driver_node.cpp` | Log noise on the Jetson |
+
+### State estimation
+
+| Sev. | Finding | Where | Task impact |
+|---|---|---|---|
+| ~~Major~~ Fixed (partly) | **IMU AUKF** never corrected orientation (gyro only) and subtracted gravity along body z regardless of tilt. It now fuses the BNO085's quaternion (unwrapped across ±180°) and removes gravity using roll/pitch. Its position/velocity are still body-frame double integrals, so `/imu/odometry` is now off by default (`publish_odometry:=true`). Tested in WSL: 10 s at rest on an 11.5° tilt gave 0.06 m/s residual velocity (about 2 m/s before). | `IMU/imu/kalman_filter.py` | Meteorite (dead reckoning) |
+| ~~Major~~ Fixed | **`telemetry.py` silently published synthetic data on `/imu/data_raw` when the hardware failed**, which looked like a working, level, stationary IMU. Synthetic data now needs `sim_mode:=true`; otherwise a missing library or sensor logs an error, publishes nothing and retries every 2 s, and a sensor that dies at run time stops publishing after about 1 s of failed reads ([state-estimation.md](state-estimation.md)). Tested in WSL (no libraries: 0 messages; `sim_mode:=true`: 11 Hz received; injected read failures: 19 repeats, then stop). | `IMU/imu/telemetry.py` | All autonomy |
+| ~~Major~~ Fixed | `rover_ekf` used a fixed `dt`, fused the same command twice (`/cmd_vel` and `/motor/*`) and skipped zero speed, and its origin was always the first fix. Now: measured `dt`, `/motor/*` only (scaled by `speed_per_motor_command`, zero included while fresh), optional `datum_latitude`/`datum_longitude` to share NAVnode's home. Measured VESC wheel speed is used when available, commands otherwise. | `rover_ekf/ekf_node.py` | Demolition, Reactor (geofence frame) |
+| ~~Major~~ Fixed (verify on rover) | Yaw conventions conflicted: the EKF is ENU (0 = east), the IMU tare sets 0 = north, so dead reckoning ran 90° off the GPS axes. `imu_yaw_offset_deg` (90) converts. True north depends on the tare being done facing true north (declination if a compass is used). The turn direction of `/imu/euler` must still be checked once on the rover ([state-estimation.md](state-estimation.md#still-to-check-on-the-rover)). | EKF, `telemetry.py` | Bearings in Mining/Meteorite reports |
+| ~~Major~~ Fixed | Two TF parents for `base_link` (`world` from `motion_coordinator`, `odom` from `rover_ekf`). With fresh `/ekf/odometry`, `motion_coordinator` now publishes `world → odom` (identity) instead, so the tree is `world → odom → base_link`; without the EKF it keeps `world → base_link` for the simulated view. | both | Broke RViz/Nav2 when run together |
+| ~~Major~~ Fixed | `gps_bridge_node` reported every fix as `STATUS_FIX` with no covariance, published GGA quality 6 (the receiver's dead-reckoning estimate) as a real fix, published each epoch twice (GGA, then RMC with altitude 0), and published nothing without a fix. Now: status from the GGA quality (FIX / SBAS / GBAS for RTK), an HDOP × UERE covariance, explicit `STATUS_NO_FIX` for quality 0 and 6, RMC only as a fallback; `rover_ekf` uses that covariance instead of its fixed 1.5 m², and the dashboard keeps the last good position on no fix ([navigation.md](navigation.md#gps_bridge_node-fix-status-and-covariance)). Tested in WSL with checksummed sentences; the UERE values are typical figures, not measured for this receiver. | `gps_bridge_node.py`, `ekf_node.py`, `dashboard/app.js` | EKF trusted invalid fixes |
+
+### Navigation
+
+| Sev. | Finding | Where | Task impact |
+|---|---|---|---|
+| Critical | **No path follower.** Nothing turns range/bearing into `cmd_vel`. (The `FollowRoute` action's race is fixed: it used to run in a detached thread reading `currentPosition`, deleted every 200 ms, and route nodes the services could delete. The goal is now tracked by the node's timer on the executor thread and reports progress to the real target; it still does not drive.) | `NAVnode.cpp` | Demolition (autonomous), any waypoint task |
+| ~~Major~~ Fixed | The nine add-waypoint/obstacle services silently set home to the current position if home was unset, even before any fix. Now refused (logged) without a fix; with a fix, home is set to it with a warning. | `NAVnode.cpp` | Wrong frame without warning |
+| Major | The ResetHome password is a constant in the source. Fine for a team tool, not a security control. | `Waypoint.hpp` | — |
+| Major | `SerialPort::read()` is a raw read (≤ 256 bytes). NAVnode now buffers; other users of `SerialPort` must too. | `serial_communication` | — |
+| Major | No polygon geofence (Reactor Recovery storm sectors); obstacles are only circles typed in by hand. | — | Reactor Recovery |
+| Minor | Comment says queue depth 1, code uses 10; track log path relative to the working directory. | `NAVnode.cpp` | — |
+
+### Dashboard and network
+
+| Sev. | Finding | Where | Task impact |
+|---|---|---|---|
+| ~~Major~~ Fixed (tiles: prepare per site) | **Needed the internet**: Google Fonts, jsDelivr (roslib, three, ros3d), unpkg (Leaflet) and online map tiles, so a field site without uplink got a blank dashboard. All libraries and the font are now vendored in `dashboard/vendor/` (pinned, roslib was the floating `@1`; hash-checked by `fetch.sh`). Map tiles come from `dashboard/tiles/` when present, else online OSM (attribution restored). Tested in the browser: no request outside the local server. The competition-area tiles still have to be prepared ([vendor README](../dashboard/vendor/README.md#map-tiles)). | `dashboard/` | All tasks |
+| Major | rosbridge is unauthenticated, and `dashboard_helper` starts and kills processes through unauthenticated services. Keep the rover network closed. | `dashboard/`, `dashboard_helper` | — |
+| Major | No judge-click target UI (Demolition: judges pick targets on a map). | — | Demolition |
+
+### Arm
+
+| Sev. | Finding | Where | Task impact |
+|---|---|---|---|
+| Major | One actuated joint; the IK is a coordinate-wise numeric search; `move_to_point` returns success immediately; the default target (25, 0, 2) mixes units. | `arm_controller` | Mining sample handling, Reactor Recovery |
+
+### Missing capabilities for CIRC 2027
+
+| Need | Task | Notes |
+|---|---|---|
+| Closed-loop controller (pure pursuit on `NAVnode` targets, or Nav2) | Demolition, all waypoint driving | Needs a pose at ≥ 10 Hz: LIO output fused into the EKF |
+| ArUco detector (`DICT_4X4_100`) with range/bearing | Demolition, Meteorite | `cv2.aruco` on the existing camera streams |
+| GNSS-free localisation | Meteorite | LIO + wheel + IMU; `rover_ekf use_gps:=false` is the switch |
+| Emitter kill switch (lights, IR projectors of a depth camera, LiDAR?) | Prison Break high-security area | Check whether the chosen depth camera's IR projector counts as emitted light; the L2 LiDAR emits 905 nm |
+| Polygon geofence | Reactor Recovery | Point-in-polygon on the local frame, enforced in the controller |
+| True-north bearings | Mining, Meteorite reports | Tare facing true north (`imu_yaw_offset_deg` then gives ENU); add the declination if a compass is used for the tare |
+| Offline map tiles for the site | All | Libraries are local; prepare `dashboard/tiles/` for the competition area |
+| Mass budget (50 kg target) | All | Track LiDAR + camera + mounts |
+
+## SLAM status
+
+| Item | State |
+|---|---|
+| Sensor contract (`/lidar/points`, `/lidar/imu`, `/camera/*`) | Defined ([slam/architecture.md](slam/architecture.md)); simulated LiDAR, IMU and RGB-D publish in Gazebo Fortress |
+| Pipeline (record → convert → run → score) | Works in simulation: KISS-ICP ATE 0.43 m on a 16.5 m loop ([slam/research-plan.md](slam/research-plan.md#e1--odometry-bench-off)) |
+| LiDAR-inertial candidates (Point-LIO, FAST-LIO2, DLIO) | FAST-LIO2 (official ROS 2 branch, pinned) chosen, audited, built in WSL2 and run on the E1 bag 2026-11-15: ATE 0.076 m vs KISS-ICP 0.426 m on the same 16.5 m simulated loop, 69 % of one core on the development PC ([research-plan.md](slam/research-plan.md#e1--odometry-bench-off)). Simulation only; not yet on real L2 data or the Jetson. DLIO was reviewed: low build risk, moderate runtime risk (unauthenticated `save_pcd`, unbounded memory, stale `feature/ros2` branch); evaluate only in WSL with `ROS_LOCALHOST_ONLY=1`. Point-LIO (Unitree's port) is the closest match to the L2 |
+| Simulation realism | Point `time` field added (instantaneous scans, so no deskew to test); still missing: sweep distortion, a noise model validated against the L2, closed-loop driving for loop-closure metrics |
+| Integration | Missing: LIO pose/velocity into `rover_ekf`, map → `odom` TF, obstacle output to the controller |
+
+**Recommended order:**
+
+1. ~~Deadman timeout in the drive path~~ (done 2026-11-15).
+2. ~~Make `telemetry.py`'s synthetic fallback opt-in~~ and ~~fix `gps_bridge` status/covariance~~ (both done 2026-11-15). Still to do: record the receiver standing still for 10 min to set the UERE parameters.
+3. Add a per-point time field to the simulated cloud and build Point-LIO (needs permission), then run E1 against KISS-ICP.
+4. Fuse LIO into `rover_ekf` (E2). The TF tree (`world → odom → base_link`) and the shared origin (`datum_*`) are in place since 2026-11-15.
+5. Pure-pursuit controller on NAVnode targets in simulation, then the ArUco node.
+6. Vendor dashboard assets; add the judge-click UI and the geofence.
+
+## How this review was done
+
+Each package's source was read. Fixes were tested in WSL2 (Ubuntu 22.04, ROS 2 Humble): `colcon build`, `scripts/tests/navnode_nmea_smoke_test.sh` (socat-fed NMEA), and a direct run of the EKF node. Findings marked "code read" were not exercised on hardware. Nothing was tested on the Jetson.

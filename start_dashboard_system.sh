@@ -11,7 +11,7 @@ echo "Cleaning up any old background processes..."
 pkill -f "python3.*dashboard_helper" 2>/dev/null
 pkill -f rosbridge_websocket 2>/dev/null
 pkill -f rosapi 2>/dev/null
-pkill -f python.*http.server 2>/dev/null
+pkill -f "python.*http.server" 2>/dev/null
 sleep 1
 
 echo "=== Starting D.A.V.E. Dashboard Backend System ==="
@@ -32,6 +32,16 @@ else
     exit 1
 fi
 
+# Failure point: a stale process (or another program) already holding a port makes the new
+# server fail silently into its log while this script still prints "All services launched".
+port_busy() { (exec 3<>"/dev/tcp/127.0.0.1/$1") 2>/dev/null; }
+for p in 9090 8000; do
+    if port_busy "$p"; then
+        echo "ERROR: port $p is already in use; stop whatever holds it (ss -ltnp | grep $p) and retry."
+        exit 1
+    fi
+done
+
 # 1. Start Rosbridge Websocket Server on port 9090
 echo "Starting Rosbridge Websocket Server..."
 ros2 launch rosbridge_server rosbridge_websocket_launch.xml port:=9090 > /tmp/rosbridge.log 2>&1 &
@@ -49,6 +59,22 @@ HELPER_PID=$!
 echo "Starting Dashboard Web Server on http://localhost:8000..."
 python3 -m http.server 8000 --directory "$SCRIPT_DIR/dashboard" > /tmp/webserver.log 2>&1 &
 WEB_PID=$!
+
+# Failure point: report children that died during start-up instead of claiming success.
+sleep 3
+STARTUP_OK=1
+for pair in "Rosbridge:$ROSBRIDGE_PID:/tmp/rosbridge.log" "Dashboard Helper:$HELPER_PID:/tmp/dashboard_helper.log" "Web Server:$WEB_PID:/tmp/webserver.log"; do
+    IFS=: read -r pname ppid plog <<< "$pair"
+    if ! kill -0 "$ppid" 2>/dev/null; then
+        echo "ERROR: $pname exited during start-up; last log lines ($plog):"
+        tail -n 5 "$plog" 2>/dev/null
+        STARTUP_OK=0
+    fi
+done
+if [ "$STARTUP_OK" -eq 0 ]; then
+    kill $ROSBRIDGE_PID $HELPER_PID $WEB_PID 2>/dev/null
+    exit 1
+fi
 
 echo "All services launched in the background!"
 echo "- Rosbridge PID: $ROSBRIDGE_PID (Logs: /tmp/rosbridge.log)"
@@ -70,6 +96,7 @@ cleanup() {
     # Force clean up any leftover subprocesses
     pkill -f dashboard_helper 2>/dev/null
     pkill -f rosbridge_websocket 2>/dev/null
+    pkill -f rosapi 2>/dev/null
     echo "Clean exit."
     exit 0
 }

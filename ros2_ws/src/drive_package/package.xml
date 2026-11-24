@@ -8,7 +8,7 @@
   <description>Has my driving system and input viewer in it</description>
 
   <maintainer email="danny@todo.todo">danny</maintainer>
-  <license>TODO</license>
+  <license>MIT</license>
 
   <buildtool_depend>ament_cmake</buildtool_depend>
 
@@ -25,7 +25,8 @@
   <exec_depend>visualization_msgs</exec_depend>
   <exec_depend>tf2_ros</exec_depend>
 
-  <!-- Testing, idk what this is Chat just put it here when it didn't run ngl-->
+  <!-- Testing -->
+  <test_depend>ament_cmake_gtest</test_depend>
   <test_depend>ament_lint_auto</test_depend>
   <test_depend>ament_lint_common</test_depend>
 

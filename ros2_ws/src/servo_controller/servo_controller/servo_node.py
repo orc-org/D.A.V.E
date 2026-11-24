@@ -62,9 +62,15 @@ class ServoNode(Node):
         else:
             self.get_logger().warn(f'Unknown command: {cmd}')
 
-    def __del__(self):
-        # Cleanup GPIO on exit
-        GPIO.cleanup()
+    def destroy_node(self):
+        pins = [self.s1_l, self.s1_r, self.s2_l, self.s2_r]
+        try:
+            for p in pins:
+                GPIO.output(p, GPIO.LOW)
+            GPIO.cleanup(pins)
+        except Exception:
+            pass
+        super().destroy_node()
 
 def main(args=None):
     rclpy.init(args=args)

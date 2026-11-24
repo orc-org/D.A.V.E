@@ -15,7 +15,7 @@ setup(
     zip_safe=True,
     maintainer='danny',
     maintainer_email='dannyfairall@gmail.com',
-    description='TODO: Package description',
+    description='Rover light control over GPIO',
     license='Apache-2.0',
     extras_require={
         'test': [

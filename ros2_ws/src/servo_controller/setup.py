@@ -15,8 +15,8 @@ setup(
     zip_safe=True,
     maintainer='orc',
     maintainer_email='orc@example.com',
-    description='TODO: Package description',
-    license='TODO: License declaration',
+    description='Camera pan/tilt servo controller driven by servo_commands',
+    license='MIT',
     extras_require={
         'test': [
             'pytest',

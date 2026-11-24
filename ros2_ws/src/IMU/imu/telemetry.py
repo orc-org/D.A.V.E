@@ -19,9 +19,14 @@ try:
         BNO_REPORT_ROTATION_VECTOR,
         BNO_REPORT_MAGNETOMETER,
     )
+    try:
+        from adafruit_bno08x import BNO_REPORT_GAME_ROTATION_VECTOR
+    except ImportError:
+        BNO_REPORT_GAME_ROTATION_VECTOR = None
     from adafruit_bno08x.i2c import BNO08X_I2C
     ADAFRUIT_AVAILABLE = True
 except ImportError:
+    BNO_REPORT_GAME_ROTATION_VECTOR = None
     ADAFRUIT_AVAILABLE = False
 
 
@@ -56,6 +61,8 @@ class TelemetryNode(Node):
         self.declare_parameter('publish_rate', 20.0)
         self.declare_parameter('frame_id', 'imu_link')
         self.declare_parameter('sim_mode', False)
+        # Default to 6-DoF Game Rotation Vector so nearby high-current VESC cables do not warp yaw
+        self.declare_parameter('use_magnetometer', False)
         self.declare_parameter('topic_raw_imu', '/imu/data_raw')
         self.declare_parameter('topic_euler', '/imu/euler')
         self.declare_parameter('topic_telemetry_str', '/imu/telemetry_str')
@@ -71,6 +78,7 @@ class TelemetryNode(Node):
         self.publish_rate = self.get_parameter('publish_rate').value
         self.frame_id = self.get_parameter('frame_id').value
         self.sim_mode = self.get_parameter('sim_mode').value
+        self.use_magnetometer = bool(self.get_parameter('use_magnetometer').value)
         self.topic_raw_imu = self.get_parameter('topic_raw_imu').value
         self.topic_euler = self.get_parameter('topic_euler').value
         self.topic_telemetry_str = self.get_parameter('topic_telemetry_str').value
@@ -78,6 +86,12 @@ class TelemetryNode(Node):
         self.publishing_enabled = True
         self.bno = None
         self.i2c = None
+        # Synthetic data is opt-in (sim_mode:=true). Without it, a missing or failed sensor means NOTHING is
+        # published, so consumers see a dead topic instead of a perfectly level, stationary fake IMU.
+        self.last_connect_attempt = 0.0
+        self.reconnect_period_s = 2.0
+        self.read_failures = 0
+        self.max_read_failures = max(int(self.publish_rate), 1)   # about one second of failed reads
 
         # cache last valid readings to avoid zero-quaternion frames on unready I2C packets
         self.last_valid_accel = (0.0, 0.0, 9.81)
@@ -116,14 +130,18 @@ class TelemetryNode(Node):
     def _init_hardware(self):
         """attempt to initialize the bno085 hardware sensor."""
         if self.sim_mode:
-            self.get_logger().info("Simulation mode requested. Running without physical hardware.")
+            self.get_logger().warn(
+                "sim_mode is true: publishing SYNTHETIC IMU data (level, stationary). Never use this on the rover."
+            )
             return
 
+        self.last_connect_attempt = time.monotonic()
         if not ADAFRUIT_AVAILABLE:
-            self.get_logger().warn(
-                "Adafruit BNO08x libraries not available. Falling back to simulation mode."
+            # used to switch silently to synthetic data, which looked like a working IMU
+            self.get_logger().error(
+                "Adafruit BNO08x libraries not available: no IMU data will be published. "
+                "Install adafruit-circuitpython-bno08x and adafruit-extended-bus, or run with sim_mode:=true for synthetic data."
             )
-            self.sim_mode = True
             return
 
         try:
@@ -131,55 +149,90 @@ class TelemetryNode(Node):
             self.bno = BNO08X_I2C(self.i2c, address=self.i2c_address)
             self.bno.enable_feature(BNO_REPORT_ACCELEROMETER)
             self.bno.enable_feature(BNO_REPORT_GYROSCOPE)
-            self.bno.enable_feature(BNO_REPORT_ROTATION_VECTOR)
-            self.bno.enable_feature(BNO_REPORT_MAGNETOMETER)
+            if not self.use_magnetometer and BNO_REPORT_GAME_ROTATION_VECTOR is not None:
+                self.bno.enable_feature(BNO_REPORT_GAME_ROTATION_VECTOR)
+                quat_mode = "6-DoF Game Rotation Vector (magnetometer disabled)"
+            else:
+                self.bno.enable_feature(BNO_REPORT_ROTATION_VECTOR)
+                self.bno.enable_feature(BNO_REPORT_MAGNETOMETER)
+                quat_mode = "9-DoF Rotation Vector (magnetometer enabled)"
             time.sleep(0.2)  # Give BNO085 hardware time to initialize reports
-            self.sim_mode = False
+            self.read_failures = 0
             self.get_logger().info(
-                f"Successfully connected to BNO085 on Bus {self.i2c_bus_num} (Address: {hex(self.i2c_address)})."
+                f"Successfully connected to BNO085 on Bus {self.i2c_bus_num} "
+                f"(Address: {hex(self.i2c_address)}, Mode: {quat_mode})."
             )
         except Exception as e:
-            self.get_logger().warn(
+            self.get_logger().error(
                 f"Failed to connect to BNO085 on Bus {self.i2c_bus_num}: {e}. "
-                "Falling back to simulation mode."
+                f"No IMU data is published; retrying every {self.reconnect_period_s:.0f} s."
             )
-            self.sim_mode = True
             self.bno = None
             self.i2c = None
 
+    def _record_read_failure(self, reason: str):
+        """Hold last sample during brief I2C stalls, then drop connection once stalled too long."""
+        self.read_failures += 1
+        if self.read_failures >= self.max_read_failures:
+            self.get_logger().error(
+                f"BNO085 read failed {self.read_failures} times in a row ({reason}): "
+                "stopped publishing IMU data, reconnecting."
+            )
+            self.bno = None
+            self.i2c = None
+            return None
+        self.get_logger().warn(
+            f"Transient error reading BNO085 sensor: {reason}. Returning last valid frame.",
+            throttle_duration_sec=1.0,
+        )
+        return self._cached_frame()
+
+    def _cached_frame(self):
+        accel_x, accel_y, accel_z = self.last_valid_accel
+        gyro_x, gyro_y, gyro_z = self.last_valid_gyro
+        quat_i, quat_j, quat_k, quat_real = self.last_valid_quat
+        return accel_x, accel_y, accel_z, gyro_x, gyro_y, gyro_z, quat_i, quat_j, quat_k, quat_real
+
+    def _read_orientation_quaternion(self):
+        if not self.use_magnetometer and BNO_REPORT_GAME_ROTATION_VECTOR is not None:
+            game_quat = getattr(self.bno, 'game_quaternion', None)
+            if game_quat is not None:
+                return game_quat
+        return self.bno.quaternion
+
     def read_sensor_data(self):
-        """read sensor data from bno085 or generate simulated data if in sim mode."""
-        if not self.sim_mode and self.bno is not None:
+        """read sensor data from bno085, or synthetic data if sim_mode is true. Returns None when there is no data."""
+        if not self.sim_mode:
+            if self.bno is None:
+                return None
             try:
                 accel = self.bno.acceleration
                 gyro = self.bno.gyro
-                quat = self.bno.quaternion
+                quat = self._read_orientation_quaternion()
 
-                if accel is not None and None not in accel:
-                    self.last_valid_accel = accel
-                if gyro is not None and None not in gyro:
-                    self.last_valid_gyro = gyro
-                
-                # validate quaternion: must not be None and must have non-zero magnitude
-                if quat is not None and None not in quat:
+                got_accel = accel is not None and None not in accel and all(np.isfinite(accel))
+                got_gyro = gyro is not None and None not in gyro and all(np.isfinite(gyro))
+                got_quat = False
+                if quat is not None and None not in quat and all(np.isfinite(quat)):
                     qi, qj, qk, qr = quat
-                    mag_sq = qi*qi + qj*qj + qk*qk + qr*qr
-                    if mag_sq > 1e-6:
+                    if (qi * qi + qj * qj + qk * qk + qr * qr) > 1e-6:
                         self.last_valid_quat = (qi, qj, qk, qr)
+                        got_quat = True
 
-                accel_x, accel_y, accel_z = self.last_valid_accel
-                gyro_x, gyro_y, gyro_z = self.last_valid_gyro
-                quat_i, quat_j, quat_k, quat_real = self.last_valid_quat
+                if got_accel:
+                    self.last_valid_accel = accel
+                if got_gyro:
+                    self.last_valid_gyro = gyro
 
-                return accel_x, accel_y, accel_z, gyro_x, gyro_y, gyro_z, quat_i, quat_j, quat_k, quat_real
+                if not (got_accel or got_gyro or got_quat):
+                    return self._record_read_failure("empty/non-finite BNO085 report")
+
+                self.read_failures = 0
+                return self._cached_frame()
             except Exception as e:
-                self.get_logger().warn(f"Transient error reading BNO085 sensor: {e}. Returning last valid frame.")
-                accel_x, accel_y, accel_z = self.last_valid_accel
-                gyro_x, gyro_y, gyro_z = self.last_valid_gyro
-                quat_i, quat_j, quat_k, quat_real = self.last_valid_quat
-                return accel_x, accel_y, accel_z, gyro_x, gyro_y, gyro_z, quat_i, quat_j, quat_k, quat_real
+                return self._record_read_failure(str(e))
 
-        # simulated fallback data (gravity on z, zero gyro, identity quat)
+        # synthetic data, only when sim_mode is true (gravity on z, small wobble, identity quat)
         t = self.get_clock().now().nanoseconds * 1e-9
         accel_x = 0.05 * np.sin(t)
         accel_y = 0.05 * np.cos(t)
@@ -193,10 +246,20 @@ class TelemetryNode(Node):
         return accel_x, accel_y, accel_z, gyro_x, gyro_y, gyro_z, quat_i, quat_j, quat_k, quat_real
 
     def timer_callback(self):
+        if not self.sim_mode and self.bno is None:
+            # (missing libraries will not appear at run time, so only retry the I2C connection)
+            if ADAFRUIT_AVAILABLE and time.monotonic() - self.last_connect_attempt >= self.reconnect_period_s:
+                self._init_hardware()
+            if self.bno is None:
+                return
+
         if not self.publishing_enabled:
             return
 
-        accel_x, accel_y, accel_z, gyro_x, gyro_y, gyro_z, quat_i, quat_j, quat_k, quat_real = self.read_sensor_data()
+        data = self.read_sensor_data()
+        if data is None:
+            return
+        accel_x, accel_y, accel_z, gyro_x, gyro_y, gyro_z, quat_i, quat_j, quat_k, quat_real = data
         roll, pitch, raw_yaw = quaternion_to_euler_deg(quat_i, quat_j, quat_k, quat_real)
         self.last_raw_roll = roll
         self.last_raw_pitch = pitch
@@ -306,9 +369,14 @@ class TelemetryNode(Node):
 
     def handle_get_status(self, request, response):
         """service callback to get node status."""
-        mode_str = "Simulation" if self.sim_mode else "Hardware (BNO085)"
+        if self.sim_mode:
+            mode_str = "Simulation (synthetic data)"
+        elif self.bno is None:
+            mode_str = "No sensor (not publishing, retrying)"
+        else:
+            mode_str = "Hardware (BNO085)"
+        response.success = self.sim_mode or self.bno is not None
         pub_str = "Active" if self.publishing_enabled else "Paused"
-        response.success = True
         response.message = f"Status: {mode_str} | Publishing: {pub_str} | Bus: {self.i2c_bus_num} | Rate: {self.publish_rate} Hz"
         return response
 

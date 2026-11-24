@@ -3,9 +3,9 @@
 <package format="3">
   <name>servo_controller</name>
   <version>0.0.0</version>
-  <description>TODO: Package description</description>
+  <description>Camera pan/tilt servo controller driven by servo_commands</description>
   <maintainer email="orc@example.com">orc</maintainer>
-  <license>TODO: License declaration</license>
+  <license>MIT</license>
 
   <depend>rclpy</depend>
   <depend>std_msgs</depend>

@@ -3,7 +3,7 @@
 <package format="3">
   <name>light_package</name>
   <version>0.0.0</version>
-  <description>TODO: Package description</description>
+  <description>Rover light control over GPIO</description>
   <maintainer email="dannyfairall@gmail.com">danny</maintainer>
   <license>Apache-2.0</license>
 

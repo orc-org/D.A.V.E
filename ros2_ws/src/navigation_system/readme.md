@@ -77,4 +77,4 @@ sudo usermod -a -G dialout $USER
 
 ls -l /dev/ttyUSB0
 
-can test using test_gps.py.
+can test using `scripts/hardware_tests/test_gps.py`.

@@ -34,6 +34,7 @@ let imuFilteredEulerSub = null;
 let imuRawSub = null;
 let imuFilteredSub = null;
 let imuOdomSub = null;
+let ekfOdomSub = null;
 let imuStrSub = null;
 
 let imuEulerData = { roll: 0.0, pitch: 0.0, yaw: 0.0, lastUpdate: null };
@@ -43,6 +44,10 @@ let imuMotionData = {
     gyro: { x: 0.0, y: 0.0, z: 0.0 }
 };
 let imuOdomData = {
+    pos: { x: 0.0, y: 0.0, z: 0.0 },
+    vel: { x: 0.0, y: 0.0, z: 0.0 }
+};
+let ekfOdomData = {
     pos: { x: 0.0, y: 0.0, z: 0.0 },
     vel: { x: 0.0, y: 0.0, z: 0.0 }
 };
@@ -364,8 +369,9 @@ function setupROSInterfaces() {
     tfSub.subscribe((msg) => {
         for (let i = 0; i < msg.transforms.length; i++) {
             let t = msg.transforms[i];
-            // Accept TF transforms from authoritative odom or map frames to avoid collisions
-            if (t.child_frame_id === 'base_link' && (t.header.frame_id === 'odom' || t.header.frame_id === 'map')) {
+            // Accept TF transforms from authoritative odom or map frames (real base_link or Gazebo base_footprint)
+            if ((t.child_frame_id === 'base_link' || t.child_frame_id === 'base_footprint') &&
+                (t.header.frame_id === 'odom' || t.header.frame_id === 'map')) {
                 let x = t.transform.translation.x;
                 let y = t.transform.translation.y;
                 if (valBasePos) valBasePos.innerText = `X: ${x.toFixed(2)}, Y: ${y.toFixed(2)}`;
@@ -2176,11 +2182,15 @@ function setupGPSROSInterfaces() {
     });
     gpsFixSub.subscribe((msg) => {
         if (msg && msg.latitude !== undefined && msg.longitude !== undefined) {
-            gpsCurrentFix.latitude = msg.latitude;
-            gpsCurrentFix.longitude = msg.longitude;
-            gpsCurrentFix.altitude = msg.altitude || 0.0;
             gpsCurrentFix.status = (msg.status && msg.status.status !== undefined) ? msg.status.status : 0;
             gpsCurrentFix.lastUpdate = Date.now();
+            // gps_bridge now publishes STATUS_NO_FIX (-1) with a 0,0 position when there is no fix:
+            // keep the last good position instead of jumping the map to 0,0
+            if (gpsCurrentFix.status >= 0) {
+                gpsCurrentFix.latitude = msg.latitude;
+                gpsCurrentFix.longitude = msg.longitude;
+                gpsCurrentFix.altitude = msg.altitude || 0.0;
+            }
 
             if (!gpsHomeOrigin.isSet && gpsCurrentFix.status >= 0) {
                 gpsHomeOrigin.latitude = msg.latitude;
@@ -2547,12 +2557,23 @@ function initLeafletMap() {
     try {
         leafletMap = L.map('leaflet-map', {
             zoomControl: true,
-            attributionControl: false
+            attributionControl: true   // OpenStreetMap's licence requires the attribution (it was hidden)
         }).setView([initLat, initLon], 18);
 
-        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-            maxZoom: 19
-        }).addTo(leafletMap);
+        // Map tiles: a local tile folder (dashboard/tiles/{z}/{x}/{y}.png, prepared before the competition,
+        // see dashboard/vendor/README.md) is used when present; otherwise online OpenStreetMap tiles.
+        // Without either the map is blank, but the rover marker, track and click-to-target still work.
+        const addTiles = (url, maxZoom, attribution, note) => {
+            L.tileLayer(url, { maxZoom: maxZoom, attribution: attribution }).addTo(leafletMap);
+            console.log('Map tiles: ' + note);
+        };
+        fetch('tiles/tiles.json', { cache: 'no-store' })
+            .then(r => r.ok ? r.json() : Promise.reject())
+            .then(info => addTiles('tiles/{z}/{x}/{y}.png', info.maxZoom || 19, info.attribution || '',
+                                   'local folder dashboard/tiles'))
+            .catch(() => addTiles('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', 19,
+                                  '&copy; OpenStreetMap contributors',
+                                  'online OpenStreetMap (blank without internet)'));
 
         const roverIcon = L.divIcon({
             className: 'custom-rover-marker',
@@ -2895,28 +2916,28 @@ function setupIMUROSInterfaces() {
     });
     ekfOdomSub.subscribe((msg) => {
         if (msg && msg.pose && msg.pose.pose && msg.twist && msg.twist.twist) {
-            imuOdomData.pos = {
+            ekfOdomData.pos = {
                 x: msg.pose.pose.position.x || 0.0,
                 y: msg.pose.pose.position.y || 0.0,
                 z: msg.pose.pose.position.z || 0.0
             };
-            imuOdomData.vel = {
+            ekfOdomData.vel = {
                 x: msg.twist.twist.linear.x || 0.0,
                 y: msg.twist.twist.linear.y || 0.0,
                 z: msg.twist.twist.linear.z || 0.0
             };
             const ekfValEl = document.getElementById('val-ekf-telemetry-fusion');
             if (ekfValEl) {
-                const x = imuOdomData.pos.x;
-                const y = imuOdomData.pos.y;
-                const vx = imuOdomData.vel.x;
+                const x = ekfOdomData.pos.x;
+                const y = ekfOdomData.pos.y;
+                const vx = ekfOdomData.vel.x;
                 ekfValEl.innerText = `X: ${x.toFixed(2)}m | Y: ${y.toFixed(2)}m | Speed: ${vx.toFixed(2)} m/s`;
             }
             updateIMUUI();
         }
     });
 
-    // 5. /imu/telemetry_str (Formatted Multi-line Telemetry String)
+    // 6. /imu/telemetry_str (Formatted Multi-line Telemetry String)
     imuStrSub = new ROSLIB.Topic({
         ros: ros,
         name: '/imu/telemetry_str',
@@ -2938,6 +2959,7 @@ function cleanupIMUROSInterfaces() {
     if (imuRawSub) { imuRawSub.unsubscribe(); imuRawSub = null; }
     if (imuFilteredSub) { imuFilteredSub.unsubscribe(); imuFilteredSub = null; }
     if (imuOdomSub) { imuOdomSub.unsubscribe(); imuOdomSub = null; }
+    if (ekfOdomSub) { ekfOdomSub.unsubscribe(); ekfOdomSub = null; }
     if (imuStrSub) { imuStrSub.unsubscribe(); imuStrSub = null; }
 }
 

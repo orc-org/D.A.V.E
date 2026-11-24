@@ -27,9 +27,7 @@ struct TrieNode{ // node used for Binary  Tree (named funny so as to not clash w
     TrieNode *rightChild;
 
     // Constructors
-    TrieNode() {
-        letter = " ";
-    }
+    TrieNode() : letter(" "), leftChild(nullptr), rightChild(nullptr) {}
 
     TrieNode(string aLetter, TrieNode *aLeftChild, TrieNode *aRightChild){
         letter = aLetter;
@@ -319,7 +317,8 @@ public:
     void handle_decode_accepted(
         const std::shared_ptr<rclcpp_action::ServerGoalHandle<enigma_machine_interfaces::action::Decode>> goal_handle)
     {
-        std::thread{std::bind(&EnigmaMachine::execute_decode, this, std::placeholders::_1), goal_handle}.detach();
+        auto self = std::static_pointer_cast<EnigmaMachine>(shared_from_this());
+        std::thread([self, goal_handle]() { self->execute_decode(goal_handle); }).detach();
     }
 
     void execute_decode(
@@ -360,7 +359,8 @@ public:
     void handle_encode_accepted(
         const std::shared_ptr<rclcpp_action::ServerGoalHandle<enigma_machine_interfaces::action::Encode>> goal_handle)
     {
-        std::thread{std::bind(&EnigmaMachine::execute_encode, this, std::placeholders::_1), goal_handle}.detach();
+        auto self = std::static_pointer_cast<EnigmaMachine>(shared_from_this());
+        std::thread([self, goal_handle]() { self->execute_encode(goal_handle); }).detach();
     }
 
     void execute_encode(

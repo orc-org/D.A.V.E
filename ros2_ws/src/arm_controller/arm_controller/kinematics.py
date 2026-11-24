@@ -1,6 +1,5 @@
 import numpy as np
 import math
-import matplotlib.pyplot as plt
 
 # this class creates components that can be linked together to form a kinematic chain
 # and also ways to move them.
@@ -284,6 +283,7 @@ class Component3D:
             child.draw(ax)
 
     def plot_chain(self, title="3D Kinematic Chain"):
+        import matplotlib.pyplot as plt  # lazy: debugging plots only, not needed on the rover
         fig = plt.figure(figsize=(8, 8))
         ax = fig.add_subplot(111, projection='3d') 
         

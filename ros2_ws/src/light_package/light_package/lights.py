@@ -8,7 +8,7 @@ import Jetson.GPIO as GPIO
 
 
 
-# BCM pin number (CHANGE THIS)
+# Jetson header (BOARD) pin number, see docs/hardware.md
 GPIO_LIGHT_PIN = 12
 
 
@@ -43,7 +43,7 @@ class LightController(Node):
 
     def destroy_node(self):
         GPIO.output(GPIO_LIGHT_PIN, GPIO.LOW)
-        GPIO.cleanup()
+        GPIO.cleanup([GPIO_LIGHT_PIN])
         super().destroy_node()
 
 

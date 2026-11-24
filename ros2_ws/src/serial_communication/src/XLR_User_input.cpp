@@ -18,9 +18,13 @@ public:
 
     XLR_UI() : Node("XLR_UI") {
         ConverseClient = this->create_client<Converse> ("Converse");
+    }
 
-        while(true){
-            std::cin >> message;
+    void readInputLoop() {
+        while (rclcpp::ok() && (std::cin >> message)) {
+            if (!rclcpp::ok()) {
+                break;
+            }
             converse(message);
         }
     }
@@ -33,9 +37,9 @@ private:
         std::cout << response->incoming << '\n';
     }
 
-    void converse(std::string message){
+    void converse(const std::string& msg){
         auto request = std::make_shared<Converse::Request>();
-        request->outgoing = message + '\n';
+        request->outgoing = msg + '\n';
 
         ConverseClient->async_send_request(request, std::bind(&XLR_UI::converse_response, this, _1));
     }
@@ -44,14 +48,12 @@ private:
 };
 
 
-
-
 int main(int argc, char** argv) {
-    (void)argc;
-    (void)argv;
-
     rclcpp::init(argc, argv);
-    rclcpp::spin(std::make_shared<XLR_UI>());
+    auto node = std::make_shared<XLR_UI>();
+    std::thread input_thread(&XLR_UI::readInputLoop, node);
+    input_thread.detach();
+    rclcpp::spin(node);
     rclcpp::shutdown();
 
     return 0;

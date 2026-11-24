@@ -3,7 +3,7 @@
 <package format="3">
   <name>enigma_machine</name>
   <version>0.0.0</version>
-  <description>TODO: Package description</description>
+  <description>Enigma/Morse code encode and decode actions and services for the Morse challenge</description>
   <maintainer email="isaac@todo.todo">isaac</maintainer>
   <license>Apache-2.0</license>
 
