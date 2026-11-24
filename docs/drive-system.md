@@ -55,7 +55,7 @@ No node in this repository currently publishes `/control_mode` or `/sensitivity`
 
 Subscribes to the four `/motor/*` topics, ramps each command toward its target, and writes one extended-ID CAN frame per wheel at `publish_rate` (50 Hz).
 
-**Deadman (`command_timeout`, default 0.5 s).** A wheel whose last command is older than this is set to zero at once, without ramping, and a warning is logged. Every command source must therefore publish continuously: the dashboard sends `/cmd_vel` at 10 Hz in manual mode and `joy_node` repeats at 20 Hz by default, while a node that publishes only on change will be stopped after 0.5 s. The wheels also stay stopped until the first command arrives. The timeout uses a steady clock, so it is unaffected by simulation time. `command_timeout:=0` disables it (bench tests only). The simulator's `sim_drive_bridge` has equivalent 0.3 s / 0.5 s timeouts.
+**Deadman (`command_timeout`, default 0.5 s).** A wheel whose last command is older than this is set to zero at once, without ramping, and a warning is logged. On node shutdown (`~VescCanDriverNode()`), active brake/zero CAN frames are also flushed to all four wheels before closing the CAN socket. Every command source must therefore publish continuously: the dashboard sends `/cmd_vel` at 10 Hz in manual mode and `joy_node` repeats at 20 Hz by default, while a node that publishes only on change will be stopped after 0.5 s. The wheels also stay stopped until the first command arrives. The timeout uses a steady clock, so it is unaffected by simulation time. `command_timeout:=0` disables it (bench tests only). The simulator's `sim_drive_bridge` has equivalent 0.3 s / 0.5 s timeouts.
 
 **Measured wheel speed (`/wheel_states`).** Each loop the driver also reads the VESCs' CAN STATUS frames (packet 9, extended ID $(9 \ll 8) \,|\, \text{id}$; 8 bytes big-endian: int32 ERPM, int16 current × 10, int16 duty × 1000) and publishes `sensor_msgs/JointState` on `/wheel_states` with the joint names `front_left_wheel_joint` … `rear_right_wheel_joint`:
 
@@ -63,7 +63,7 @@ $$ \omega_{wheel} = \frac{\text{ERPM}}{p \cdot G}\cdot\frac{2\pi}{60}\ \text{rad
 
 with $p$ = `pole_pairs`, $G$ = `gear_ratio`. A wheel without a STATUS frame for `status_timeout` (0.5 s) is left out; with none reporting, nothing is published. `rover_ekf` turns it into forward speed with its own `wheel_radius` (mean of the reporting wheels × radius) and prefers it over the commands.
 
-Rover set-up (not done in code): in VESC Tool, enable **CAN status message STATUS 1** on every VESC (for example at 50 Hz). Check the sign once: drive forward slowly and every `/wheel_states` velocity must be positive. A VESC whose motor direction is inverted in its configuration may report the opposite sign. Tested on a virtual CAN bus in WSL only (ERPM 9549 → 10.0 rad/s → EKF 0.98 m/s).
+Rover set-up (not done in code): in VESC Tool, enable **CAN status message STATUS 1** on every VESC (for example at 50 Hz). Check the sign once: drive forward slowly and every `/wheel_states` velocity must be positive. A VESC whose motor direction is inverted in its configuration may report the opposite sign. Tested on a virtual CAN bus in WSL only (measured before the `0.15 m` `wheel_radius` alignment: 10.0 rad/s at `0.10 m` gave EKF 0.98 m/s; at `0.15 m` it corresponds to 1.50 m/s).
 
 ### Ramp limiting
 
@@ -78,8 +78,8 @@ so going from 0 to full takes 1 s and full forward to full reverse takes 2 s.
 | Mode | VESC packet (`comm_id`) | Value sent |
 |---|---|---|
 | `erpm` (default) | `SET_RPM` = 3, or `SET_CURRENT_BRAKE` = 2 (`brake_current = 5.0 A`) on zero/timeout (`SET_CURRENT` = 1 value 0 if `brake_on_zero:=false`) | electrical RPM or brake hold, see below |
-| `current` | `SET_CURRENT` = 1 | `cmd × max_current × 1000` (milliamps; `max_current` = 14 A) |
-| anything else (duty) | `SET_DUTY` = 0 | `cmd × max_duty × 100000` (`max_duty` = 0.95) |
+| `current` | `SET_CURRENT` = 1 (or `SET_CURRENT_BRAKE` = 2 at zero when `brake_on_zero:=true`) | `clamp(cmd, -1, 1) × max_current × 1000` (milliamps; `max_current` = 14 A) |
+| anything else (duty) | `SET_DUTY` = 0 (or `SET_CURRENT_BRAKE` = 2 at zero when `brake_on_zero:=true`) | `clamp(cmd, -1, 1) × max_duty × 100000` (`max_duty` = 0.95) |
 
 ### ERPM formula (metric mode, the default)
 

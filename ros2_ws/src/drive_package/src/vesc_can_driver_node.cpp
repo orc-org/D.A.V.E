@@ -72,7 +72,27 @@ public:
         gear_ratio_ = this->get_parameter("gear_ratio").as_double();
         use_metric_speed_ = this->get_parameter("use_metric_speed").as_bool();
 
-        if (control_mode_ == "erpm" && use_metric_speed_ && wheel_radius_ <= 0.0)
+        if (pole_pairs_ <= 0)
+        {
+            RCLCPP_FATAL(this->get_logger(), "Invalid pole_pairs (%d); must be > 0.", pole_pairs_);
+            throw std::runtime_error("pole_pairs must be > 0");
+        }
+        if (!std::isfinite(gear_ratio_) || gear_ratio_ <= 0.0)
+        {
+            RCLCPP_FATAL(this->get_logger(), "Invalid gear_ratio (%.4f); must be > 0.", gear_ratio_);
+            throw std::runtime_error("gear_ratio must be > 0");
+        }
+        if (!std::isfinite(ramp_rate_) || ramp_rate_ <= 0.0)
+        {
+            RCLCPP_WARN(this->get_logger(), "Invalid ramp_rate (%.4f); defaulting to 1.0.", ramp_rate_);
+            ramp_rate_ = 1.0;
+        }
+        if (control_mode_ == "erpm" && (!std::isfinite(max_erpm_) || max_erpm_ <= 0.0))
+        {
+            RCLCPP_FATAL(this->get_logger(), "Invalid max_erpm (%.4f); must be finite and > 0 in erpm mode.", max_erpm_);
+            throw std::runtime_error("max_erpm must be finite and > 0 in erpm mode");
+        }
+        if (control_mode_ == "erpm" && use_metric_speed_ && (!std::isfinite(wheel_radius_) || wheel_radius_ <= 0.0))
         {
             RCLCPP_FATAL(
                 this->get_logger(),
@@ -98,8 +118,15 @@ public:
         sub_qos.reliable();
         sub_qos.durability_volatile();
 
-        auto make_wheel_cb = [this](float &target_ref, rclcpp::Time &stamp_ref) {
-            return [this, &target_ref, &stamp_ref](const std_msgs::msg::Float32::SharedPtr msg) {
+        float max_cmd = 1.0f;
+        if (control_mode_ == "erpm" && use_metric_speed_) {
+            const double erpm_per_m_s =
+                (60.0 / (2.0 * M_PI * wheel_radius_)) * static_cast<double>(pole_pairs_) * gear_ratio_;
+            max_cmd = static_cast<float>(std::max(0.0, max_erpm_) / erpm_per_m_s);
+        }
+
+        auto make_wheel_cb = [this, max_cmd](float &target_ref, rclcpp::Time &stamp_ref) {
+            return [this, max_cmd, &target_ref, &stamp_ref](const std_msgs::msg::Float32::SharedPtr msg) {
                 if (!std::isfinite(msg->data)) {
                     target_ref = 0.0f;
                     return;
@@ -108,7 +135,7 @@ public:
                     target_ref = 0.0f;
                     return;
                 }
-                target_ref = std::clamp(msg->data, -1.0f, 1.0f);
+                target_ref = std::clamp(msg->data, -max_cmd, max_cmd);
                 stamp_ref = steady_.now();
             };
         };
@@ -149,9 +176,14 @@ public:
 
     ~VescCanDriverNode()
     {
+        zeroAllTargetsAndCurrents();
         if (can_socket_ != -1) {
+            processAndSend("Front Left", 0.0f, fl_can_id_, true);
+            processAndSend("Front Right", 0.0f, fr_can_id_, true);
+            processAndSend("Rear Left", 0.0f, rl_can_id_, true);
+            processAndSend("Rear Right", 0.0f, rr_can_id_, true);
             close(can_socket_);
-            RCLCPP_INFO(this->get_logger(), "Closed CAN socket.");
+            RCLCPP_INFO(this->get_logger(), "Sent stop/brake frames and closed CAN socket.");
         }
     }
 
@@ -237,7 +269,7 @@ private:
             return;
         }
 
-        struct can_frame frame;
+        struct can_frame frame{};
         uint32_t raw_id = (static_cast<uint32_t>(comm_id) << 8) | (static_cast<uint32_t>(can_id) & 0xFF);
         frame.can_id = raw_id | CAN_EFF_FLAG;
         frame.can_dlc = 4;
@@ -258,7 +290,7 @@ private:
     void readStatusFrames()
     {
         if (can_socket_ == -1) return;
-        struct can_frame frame;
+        struct can_frame frame{};
         const int ids[4] = {fl_can_id_, fr_can_id_, rl_can_id_, rr_can_id_};
         for (int n = 0; n < 200; ++n) {
             ssize_t got = read(can_socket_, &frame, sizeof(frame));

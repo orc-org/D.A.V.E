@@ -41,6 +41,9 @@ inline WheelPair mixJoystickCommand(
     }
 
     float steering = std::clamp(steering_raw, -1.0f, 1.0f);
+    if (std::abs(steering) < deadzone) {
+        steering = 0.0f;
+    }
     float left = 0.0f;
     float right = 0.0f;
     if (throttle != 0.0f) {
@@ -50,9 +53,6 @@ inline WheelPair mixJoystickCommand(
         left = throttle - diff;
         right = throttle + diff;
     } else {
-        if (std::abs(steering) < deadzone) {
-            steering = 0.0f;
-        }
         left = -steering;
         right = steering;
     }
@@ -120,7 +120,8 @@ inline VescCanCommand computeVescCanCommand(
             raw_erpm = static_cast<double>(velocity) * max_erpm;
         }
 
-        const int32_t erpm_cap = static_cast<int32_t>(std::max(0.0, max_erpm));
+        const int32_t erpm_cap = static_cast<int32_t>(
+            std::isfinite(max_erpm) ? std::max(0.0, max_erpm) : 0.0);
         int32_t target_erpm = static_cast<int32_t>(
             std::clamp(raw_erpm, -static_cast<double>(erpm_cap), static_cast<double>(erpm_cap)));
 
@@ -138,11 +139,25 @@ inline VescCanCommand computeVescCanCommand(
         return {3, target_erpm};  // CAN_PACKET_SET_RPM
     }
 
-    if (mode == "current") {
-        return {1, static_cast<int32_t>(velocity * max_current * 1000.0)};
+    const float clamped_v = std::clamp(velocity, -1.0f, 1.0f);
+    if (std::abs(clamped_v) < 0.01f) {
+        if (brake_on_zero && brake_ma > 0) {
+            return {2, brake_ma};
+        }
+        return (mode == "current") ? VescCanCommand{1, 0} : VescCanCommand{0, 0};
     }
 
-    const float scaled_duty = velocity * static_cast<float>(max_duty);
+    if (mode == "current") {
+        if (!std::isfinite(max_current) || max_current <= 0.0) {
+            return {1, 0};
+        }
+        return {1, static_cast<int32_t>(clamped_v * max_current * 1000.0)};
+    }
+
+    if (!std::isfinite(max_duty) || max_duty <= 0.0) {
+        return {0, 0};
+    }
+    const float scaled_duty = clamped_v * static_cast<float>(max_duty);
     return {0, static_cast<int32_t>(scaled_duty * 100000.0f)};
 }
 
