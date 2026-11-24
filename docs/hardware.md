@@ -67,8 +67,8 @@ CSI cameras 0 and 1 (sensor IDs; focus motors on I²C buses 10 and 9, address `0
 | `192.168.1.88` | Second FastDDS peer |
 | `127.0.0.1` | Local discovery on the Jetson |
 
-`fastdds_profiles.xml` disables the built-in transports, uses UDPv4 with 1 MB socket buffers and a 65500-byte message size, and lists the three peers above. The `video_streamer.py` default host is `192.168.1.10`, which does not match; the process manager passes `--host 192.168.1.87` explicitly.
+`fastdds_profiles.xml` disables the built-in transports (avoiding SHM lockups), uses UDPv4 with 1 MB socket buffers and a 65500-byte message size, and configures hybrid multicast (`239.255.0.1`) plus the three static peers above (`127.0.0.1`, `192.168.1.87`, `192.168.1.88`). Check multicast load on the antenna link when running field hardware. The `video_streamer.py` default host is `192.168.1.10`, which does not match; the process manager passes `--host 192.168.1.87` explicitly.
 
 ## Physical dimensions (`rover_description/config/physical_params.yaml`)
 
-Chassis 0.70 × 0.50 × 0.20 m, 15 kg; four wheels of radius 0.15 m, 1.5 kg each; arm column base offset 0.10 m, column height 0.40 m, mount length 0.30 m, arm length 0.45 m, tool tip 0.15 m. Note the VESC driver defaults to `wheel_radius = 0.10`, which does not match this file — see [known-issues.md](known-issues.md).
+Chassis 0.70 × 0.50 × 0.20 m, 15 kg; four wheels of radius 0.15 m, 1.5 kg each; arm column base offset 0.10 m, column height 0.40 m, mount length 0.30 m, arm length 0.45 m, tool tip 0.15 m. Both `vesc_can_driver_node` and `rover_ekf` now load `wheel_radius` (`0.15 m`) from this YAML; measure physical tires outdoors before field runs — see [known-issues.md](known-issues.md).

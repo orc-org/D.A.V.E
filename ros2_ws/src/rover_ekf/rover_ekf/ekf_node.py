@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import math
+import os
 import numpy as np
 import rclpy
 from rclpy.node import Node
@@ -11,6 +12,31 @@ from tf2_ros import TransformBroadcaster
 
 WGS84_A = 6378137.0
 WGS84_E2 = 0.0066943799901413165
+
+
+def load_wheel_radius_from_config(default: float = 0.15, config_path: str = None, logger=None) -> float:
+    """Load robot_dimensions.wheel_radius from rover_description/config/physical_params.yaml."""
+    try:
+        import yaml
+        if config_path is None:
+            from ament_index_python.packages import get_package_share_directory
+            config_path = os.path.join(
+                get_package_share_directory('rover_description'),
+                'config',
+                'physical_params.yaml',
+            )
+        with open(config_path, 'r', encoding='utf-8') as f:
+            data = yaml.safe_load(f) or {}
+        dims = data.get('robot_dimensions') or {}
+        radius = float(dims['wheel_radius'])
+        if math.isfinite(radius) and radius > 0.0:
+            return radius
+        if logger is not None:
+            logger.warn(f'Missing or invalid robot_dimensions.wheel_radius in {config_path}; using {default:.3f} m')
+    except Exception as exc:
+        if logger is not None:
+            logger.warn(f'Could not load wheel_radius from physical_params.yaml ({exc}); using {default:.3f} m')
+    return float(default)
 
 
 def wrap_angle_rad(angle: float) -> float:
@@ -145,10 +171,11 @@ class RoverEKFNode(Node):
         self.declare_parameter('publish_tf', True)
         self.publish_tf = bool(self.get_parameter('publish_tf').value)
         # Measured wheel speed from vesc_can_driver_node (/wheel_states, wheel rad/s from VESC ERPM) is
-        # preferred over the commands whenever it is fresh. wheel_radius must match the real wheel
-        # (and vesc_can_driver_node's own wheel_radius): 0.10 is the driver's default, the URDF says 0.15.
+        # preferred over the commands whenever it is fresh. Defaults to rover_description/config/physical_params.yaml
+        # (0.15 m) to stay aligned with vesc_can_driver_node unless overridden via ROS parameter.
         self.declare_parameter('topic_wheel_states', '/wheel_states')
-        self.declare_parameter('wheel_radius', 0.10)
+        default_wheel_radius = load_wheel_radius_from_config(default=0.15, logger=self.get_logger())
+        self.declare_parameter('wheel_radius', default_wheel_radius)
         self.wheel_radius = float(self.get_parameter('wheel_radius').value)
         # /cmd_vel is a command, not a measurement, and was fused in addition to /motor/* (double counting)
         self.declare_parameter('fuse_cmd_vel', False)

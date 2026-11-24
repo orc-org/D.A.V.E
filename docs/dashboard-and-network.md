@@ -10,7 +10,7 @@ Browser (operator laptop)                         Jetson
  UDP video (5000, 5002, 5004)  ◄───────────────────  video_streamer
 ```
 
-`start_dashboard_system.sh` starts, in this order: `rosbridge_websocket` on port 9090, `arm_controller dashboard_helper`, and `python3 -m http.server 8000 --directory dashboard`. It first kills leftover instances, sources `/opt/ros/humble` and `ros2_ws/install`, and sets `FASTRTPS_DEFAULT_PROFILES_FILE` to the repository's `fastdds_profiles.xml`. `start_sim_system.sh` is the Gazebo equivalent and deliberately unsets the profile so discovery uses default multicast.
+`start_dashboard_system.sh` starts, in this order: `rosbridge_websocket` on port 9090, `arm_controller dashboard_helper`, and `python3 -m http.server 8000 --directory dashboard`. It first kills leftover instances, sources `/opt/ros/humble` and `ros2_ws/install`, and sets `FASTRTPS_DEFAULT_PROFILES_FILE` to the repository's `fastdds_profiles.xml`. `start_sim_system.sh` is the Gazebo equivalent and also sets `FASTRTPS_DEFAULT_PROFILES_FILE` to the hybrid multicast `fastdds_profiles.xml` (forwarding any extra CLI args directly to `sim.launch.py`).
 
 ## The web dashboard (`dashboard/`)
 
@@ -36,11 +36,11 @@ Managed processes: robot state publisher, motion coordinator, drive node, VESC d
 
 ## DDS / network configuration (`fastdds_profiles.xml`)
 
-- Transport: UDPv4 only (built-in transports disabled, so shared memory is off — noted in the script as the fix for an inter-process-communication bug).
+- Transport: UDPv4 only (built-in transports disabled, so shared memory is off — noted in the script as the fix for a `/dev/shm` lock bug on node crashes).
 - Socket buffers: 1 MiB send and receive; maximum message size 65 500 bytes.
-- Discovery: static initial peers at `127.0.0.1`, `192.168.1.87` and `192.168.1.88`.
+- Discovery: hybrid multicast (`239.255.0.1` in both `<metatrafficMulticastLocatorList>` and `<initialPeersList>`) so unlimited local nodes discover each other, plus static unicast peers at `127.0.0.1`, `192.168.1.87` and `192.168.1.88` for long-range directional antenna links.
 
-To use a different network, edit those addresses. Machines not in the list will not discover the Jetson through this profile.
+To add another remote unicast host, edit `<initialPeersList>`. Multicast bandwidth impact over the hardware rover radio link should still be verified in field testing.
 
 | Port | Protocol | Purpose |
 |---|---|---|

@@ -61,7 +61,7 @@ All consumers must also run with the camera absent: Layer 1 needs only the LiDAR
 
 The repository already has a pose filter, [`rover_ekf`](../../ros2_ws/src/rover_ekf/rover_ekf/ekf_node.py) (5-state: X, Y, θ, v, ω; see [state-estimation.md](../state-estimation.md)). Proposed extensions **[I]**:
 
-1. Add a **velocity update** from LIO twist: forward speed → `v`, yaw rate → `ω`. This is frame-independent, so it avoids the heading-convention question in [known-issues.md](../known-issues.md#2-open--needs-measurement-or-a-team-decision) until that is settled.
+1. Add a **velocity update** from LIO twist: forward speed → `v`, yaw rate → `ω`. This is frame-independent, so it avoids the heading-convention question in [known-issues.md](../known-issues.md#2-open--needs-hardware-verification-measurement-or-autonomy-development) until that is settled.
 2. Add a **pose update** from LIO after aligning the LIO frame to the GNSS frame at start-up (a one-time yaw/offset estimate while moving).
 3. Keep GNSS as the global anchor (`map` frame) and publish `map → odom` from a small alignment node so LIO drift does not accumulate relative to GNSS.
 4. If the 2-D state proves too limited on slopes, graduate to a factor-graph smoother (for example GTSAM) as a second step; do not start there.

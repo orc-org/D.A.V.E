@@ -4,7 +4,7 @@ this package defines the physical identity, 3D model (URDF/Xacro), modern gazebo
 
 > [!NOTE]
 > * For a comprehensive deep dive into the simulation design, topic routing, coordinate frames (TF2), DDS configurations, and developer extension recipes (adding LiDAR, cameras, robotic arm control, custom worlds), see [SIMULATION_ARCHITECTURE.md](SIMULATION_ARCHITECTURE.md).
-> * For a step-by-step live walkthrough script showing how data flows from the Web Dashboard through ROS 2 to either the simulated Gazebo wheels or physical VESC CAN wheels (with exact file and line references), see [ROS2_TEAM_DEMO_GUIDE.md](ROS2_TEAM_DEMO_GUIDE.md).
+> * For a step-by-step live walkthrough script showing how data flows from the Web Dashboard through ROS 2 to either the simulated Gazebo wheels or physical VESC CAN wheels (with file and symbol references), see [ROS2_TEAM_DEMO_GUIDE.md](ROS2_TEAM_DEMO_GUIDE.md).
 
 ## prerequisites
 
@@ -80,7 +80,7 @@ open `http://localhost:8000` in your browser to monitor telemetry and drive.
 * **Manual vs. Auto Mode:** Teleop (`W`/`A`/`S`/`D`, on-screen buttons, and browser gamepad driving) only publishes `/cmd_vel` when the dashboard is in **MANUAL** mode (`autoMode == false`), which is the default on page load.
 * **Browser Gamepad Wake-Up:** Browsers do not expose USB/Bluetooth controllers to `navigator.getGamepads()` until you interact with the controller—plug in/connect your gamepad and press any button or move a stick while the dashboard tab is focused.
 * **Process Manager Safety (Sim vs. Hardware):**
-  * In simulation, Gazebo's `DiffDrive` plugin owns the `odom -> base_footprint -> base_link` TF tree (`rover_ekf` and `motion_coordinator` keep `publish_tf:=false` in sim so they do not publish competing parents for `base_link`).
+  * In simulation, Gazebo's `DiffDrive` plugin owns the `odom -> base_footprint -> base_link` TF tree (`sim.launch.py` launches `rover_ekf` with `publish_tf:=false` and does not launch `motion_coordinator`; `motion_coordinator` publishes `world -> odom`, not `base_link`, whenever `/ekf/odometry` is fresh).
   * Hardware-only entries in the Process Manager (such as **VESC BLDC Wheel Driver**, **Arm & Gripper Steppers**, and camera streamers) are for the physical Jetson/rover hardware and will fail or conflict if started on a local simulation-only laptop.
 
 ## network & `ROS_DOMAIN_ID`

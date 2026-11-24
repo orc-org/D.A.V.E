@@ -8,9 +8,9 @@ This roadmap tracks what has been fixed and verified in software/simulation vers
 
 1. ~~**Active Braking on VESC Deadman & Stop (`vesc_can_driver_node.cpp`)**~~ — **[Software Fixed & GTest Verified; Verify on VESCs]**
    * *Implemented:* `CAN_PACKET_SET_CURRENT_BRAKE` (`comm_id = 2`, default `brake_current = 5.0 A`, `brake_on_zero = true`) on deadman/zero stop; `[-max_erpm, max_erpm]` clamping in metric mode; independent `/control_mode` lockout inside `vesc_can_driver_node`.
-2. **Measure Physical Wheel Radius & Bench-Test Drive Polarity (`vesc_can_driver_node.cpp`, `physical_params.yaml`, `ekf_node.py`)** — **[Software Trigger/Axes Fixed; Hardware Measurement Open]**
-   * *Implemented:* Added `axes.size() >= 6` safety fallback, unified `right_trigger_forward = true` (R2 forward, matching `dashboard/app.js`), consistent CCW yaw in reverse.
-   * *Remaining Hardware Action:* Measure actual tire radius (`0.10 m` vs `0.15 m`) and align hardware defaults in `vesc_can_driver_node.cpp` / `ekf_node.py` / `physical_params.yaml`; verify elevated wheels spin forward on R2.
+2. **Measure Physical Wheel Radius & Resolve Package Coupling (`vesc_can_driver_node.cpp`, `physical_params.yaml`, `ekf_node.py`)** — **[Software Parameterized; Hardware Measurement Open]**
+   * *Implemented:* Added `axes.size() >= 6` safety fallback, unified `right_trigger_forward = true` (R2 forward, matching `dashboard/app.js`), consistent CCW yaw in reverse, and loaded `wheel_radius` (`0.15 m`) from `physical_params.yaml` in both `vesc_can_driver_node.cpp` and `rover_ekf/ekf_node.py`.
+   * *Remaining Hardware / Build Action:* Measure actual tire radius outdoors (`0.15 m` vs `0.10 m`), verify elevated wheels spin forward on R2, and resolve `drive_package`'s undeclared runtime dependency on `rover_description` (`physical_params.yaml`).
 3. ~~**Unify `/cmd_vel` Units (`m/s` + `rad/s`) Everywhere**~~ — **[Done & Gazebo Verified]**
    * *Implemented:* Standardized SI `(m/s, rad/s)` across `dashboard/app.js`, `motion_coordinator_node.py`, `drive_node.cpp` (`W = 0.60 m`, `max_wheel_speed = 1.0 m/s`), and `sim_drive_bridge.py`.
 4. **Resolve Pin Clashes, Hardware Pull-Downs & Udev Rules** — **[Open — Hardware Bench Task]**
@@ -53,6 +53,6 @@ This roadmap tracks what has been fixed and verified in software/simulation vers
 11. ~~**Fix `run_bag.sh` & `eval_trajectory.py`**~~ — **[Done & Verified against `e1b_route` + `pytest`]**
     * *Implemented:* `run_bag.sh` signals `$FLPID` on exit and guards against empty output; `eval_trajectory.py` computes ATE rotation error, SE(3) 10 m RPE (translation + deg), vector loop closure residual, aligned Z drift, and clear `--est-clock` overlap errors.
 12. **Hardware Bring-Up Gate (`E0` / `E1`)** — **[Open — Needs Jetson Orin Nano + Unitree L2]**
-    * Flash Jetson Orin Nano Super, build `unilidar_sdk2` for Humble on a dedicated NIC/subnet, measure real L2 scan rate (`~5.55 Hz`), IMU rate, CPU/RAM via `bench_tegrastats.sh`, and run FAST-LIO2 vs Point-LIO/KISS-ICP on real outdoor uneven-terrain bags + stationary 10-minute GNSS UERE calibration.
+    * Flash Jetson Orin Nano Super, build `unilidar_sdk2` for Humble on a dedicated NIC/subnet, measure real L2 scan rate (`~5.55 Hz`), IMU rate, CPU/RAM via `bench_tegrastats.sh`, check FastDDS hybrid multicast (`239.255.0.1`) bandwidth on the antenna link, and run FAST-LIO2 vs Point-LIO/KISS-ICP on real outdoor uneven-terrain bags + stationary 10-minute GNSS UERE calibration.
 13. **Expand Frontend CI Coverage** — **[Backend GTest/Pytest Done; JS Lint Open]**
     * Add Node/ESLint syntax/lint check for `dashboard/app.js` in CI and populate offline competition map tiles into `dashboard/tiles/`.

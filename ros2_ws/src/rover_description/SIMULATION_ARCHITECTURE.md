@@ -13,7 +13,7 @@ It covers end-to-end data pipelines, topic routing, middleware/DDS configuration
 4. [Coordinate Frames & TF Hierarchy](#4-coordinate-frames--tf-hierarchy)
 5. [Key Configurations & Root-Cause Resolutions](#5-key-configurations--root-cause-resolutions)
 6. [Component-by-Component Deep Dive](#6-component-by-component-deep-dive)
-7. [Developer Extension Guide](#7-developer-extension-guide)
+7. [Sensor & Customization Reference](#7-sensor--customization-reference)
 
 ---
 
@@ -99,7 +99,7 @@ When executing [`./start_sim_system.sh`](../../../start_sim_system.sh), the foll
 
 ### 3.1 ROS 2 $\leftrightarrow$ Gazebo Bridged Topics
 
-The [`ros_gz_bridge`](launch/sim.launch.py#L71-L121) nodes manage cross-middleware communication using the following parameter mapping:
+The [`ros_gz_bridge`](launch/sim.launch.py) nodes manage cross-middleware communication using the following parameter mapping:
 
 | ROS 2 Topic | ROS 2 Message Type | Direction | Gazebo Transport Topic | Gazebo Message Type | Purpose |
 | :--- | :--- | :---: | :--- | :--- | :--- |
@@ -138,11 +138,11 @@ flowchart LR
     D1 -->|"ignition.msgs.Twist"| E1["Gazebo DiffDrive Plugin"]
 ```
 
-* **Authoritative `drive_node` Pathway (`use_drive_node:=true`):** [`drive_node`](../drive_package/src/drive_node.cpp) mixes SI `/cmd_vel` ($v \mp \omega W / 2$ normalized by `max_wheel_speed`) or `/joy` triggers into four normalized wheel commands ($-1.0$ to $+1.0$) on `/motor/*`. [`SimDriveBridge.update_and_publish()`](scripts/sim_drive_bridge.py#L88-L115) reconstructs SI linear and angular velocity using `max_wheel_speed` and `wheel_separation`:
+* **Authoritative `drive_node` Pathway (`use_drive_node:=true`):** [`drive_node`](../drive_package/src/drive_node.cpp) mixes SI `/cmd_vel` ($v \mp \omega W / 2$ normalized by `max_wheel_speed`) or `/joy` triggers into four normalized wheel commands ($-1.0$ to $+1.0$) on `/motor/*`. [`SimDriveBridge.update_and_publish()`](scripts/sim_drive_bridge.py) reconstructs SI linear and angular velocity using `max_wheel_speed` and `wheel_separation`:
   $$v_{\text{left}} = \frac{\text{fl} + \text{rl}}{2} \cdot v_{\max,\text{wheel}}, \quad v_{\text{right}} = \frac{\text{fr} + \text{rr}}{2} \cdot v_{\max,\text{wheel}}$$
   $$v_x = \frac{v_{\text{left}} + v_{\text{right}}}{2}, \quad \omega_z = \frac{v_{\text{right}} - v_{\text{left}}}{W}$$
-* **Direct `/cmd_vel` Fallback (`use_drive_node:=false`):** If `drive_node` is disabled at launch, [`sim.launch.py`](launch/sim.launch.py#L141-L144) sets `subscribe_cmd_vel:=True` so [`SimDriveBridge.cb_cmd_vel()`](scripts/sim_drive_bridge.py#L73-L86) forwards `/cmd_vel` directly to `/cmd_vel_sim`.
-* **Safety Watchdog / Auto-Stop:** If no command is received within 500 ms of simulation clock time, [`sim_drive_bridge.py`](scripts/sim_drive_bridge.py#L112-L114) issues a zero-velocity `Twist` to prevent runaway motion in Gazebo.
+* **Direct `/cmd_vel` Fallback (`use_drive_node:=false`):** If `drive_node` is disabled at launch, [`sim.launch.py`](launch/sim.launch.py) sets `subscribe_cmd_vel:=True` so [`SimDriveBridge.cb_cmd_vel()`](scripts/sim_drive_bridge.py) forwards `/cmd_vel` directly to `/cmd_vel_sim`.
+* **Safety Watchdog / Auto-Stop:** If no command is received within 500 ms of simulation clock time, [`sim_drive_bridge.py`](scripts/sim_drive_bridge.py) issues a zero-velocity `Twist` to prevent runaway motion in Gazebo.
 
 ---
 
@@ -161,13 +161,13 @@ odom  (World odometry reference, published by Gazebo DiffDrive)
 ```
 
 ### Transform Responsibilities
-1. **`odom` $\rightarrow$ `base_footprint`:** Published dynamically by the Gazebo [`DiffDrive`](urdf/gazebo_control.xacro#L7-L40) system plugin via Gazebo topic `/tf`, mapped to ROS 2 `/tf` by `parameter_bridge`.
-2. **`base_footprint` $\rightarrow$ `base_link`:** Defined in [`rover.urdf.xacro`](urdf/rover.urdf.xacro#L45-L50) as a fixed joint with an offset of $z = \text{wheel\_radius} = 0.15\,\text{m}$. Broadcast by [`robot_state_publisher`](launch/sim.launch.py#L41-L50).
-3. **`base_link` $\rightarrow$ `*_wheel_link`:** Defined as continuous revolute joints in [`rover.urdf.xacro`](urdf/rover.urdf.xacro#L78-L115). Gazebo's [`JointStatePublisher`](urdf/gazebo_control.xacro#L43-L52) measures real wheel angles and publishes them to `/joint_states`. [`robot_state_publisher`](launch/sim.launch.py#L41-L50) computes the forward kinematics and broadcasts the dynamic wheel transforms to `/tf`.
+1. **`odom` $\rightarrow$ `base_footprint`:** Published dynamically by the Gazebo [`DiffDrive`](urdf/gazebo_control.xacro) system plugin via Gazebo topic `/tf`, mapped to ROS 2 `/tf` by `parameter_bridge`.
+2. **`base_footprint` $\rightarrow$ `base_link`:** Defined in [`rover.urdf.xacro`](urdf/rover.urdf.xacro) as a fixed joint with an offset of $z = \text{wheel\_radius} = 0.15\,\text{m}$. Broadcast by [`robot_state_publisher`](launch/sim.launch.py).
+3. **`base_link` $\rightarrow$ `*_wheel_link`:** Defined as continuous revolute joints in [`rover.urdf.xacro`](urdf/rover.urdf.xacro). Gazebo's [`JointStatePublisher`](urdf/gazebo_control.xacro) measures real wheel angles and publishes them to `/joint_states`. [`robot_state_publisher`](launch/sim.launch.py) computes the forward kinematics and broadcasts the dynamic wheel transforms to `/tf`.
 
 > [!NOTE]
 > **Single Parent Tree Rule:** In ROS TF2, every coordinate frame can only have **one** parent.
-> In simulation, Gazebo's `DiffDrive` plugin owns `odom -> base_footprint -> base_link`. Therefore, [`sim.launch.py`](launch/sim.launch.py#L164-L179) launches `rover_ekf` with `publish_tf:=False`, and [`motion_coordinator_node.py`](../arm_controller/arm_controller/motion_coordinator_node.py) keeps `publish_tf:=False` by default so neither broadcasts a competing transform for `base_link`.
+> In simulation, Gazebo's `DiffDrive` plugin owns `odom -> base_footprint -> base_link`. Therefore, [`sim.launch.py`](launch/sim.launch.py) launches `rover_ekf` with `publish_tf:=False` and does not launch [`motion_coordinator_node.py`](../arm_controller/arm_controller/motion_coordinator_node.py) (`motion_coordinator` itself has no `publish_tf` parameter; when `/ekf/odometry` is fresh `< 0.5 s`, it publishes identity `world -> odom` rather than `base_link`).
 
 ---
 
@@ -186,25 +186,25 @@ During development and testing, several critical bugs were diagnosed and permane
 
 ### 5.2 RViz2 Latched Description QoS & Fixed Frame
 * **Symptom:** RViz launched with an unrendered white model and `No tf data`.
-* **Root Cause:** [`robot_state_publisher`](launch/sim.launch.py#L41-L50) publishes `/robot_description` with a **Transient Local** durability QoS policy (latched). The default RViz configuration had `/robot_description` set to **Volatile**, meaning if RViz initialized after `robot_state_publisher`, it never received the URDF XML. Furthermore, RViz was hardcoded to `Fixed Frame: odom` before Gazebo had published its first transform.
-* **Resolution:** In [`ros2_ws/src/rover_description/rviz/default.rviz`](rviz/default.rviz#L195-L205):
+* **Root Cause:** [`robot_state_publisher`](launch/sim.launch.py) publishes `/robot_description` with a **Transient Local** durability QoS policy (latched). The default RViz configuration had `/robot_description` set to **Volatile**, meaning if RViz initialized after `robot_state_publisher`, it never received the URDF XML. Furthermore, RViz was hardcoded to `Fixed Frame: odom` before Gazebo had published its first transform.
+* **Resolution:** In [`ros2_ws/src/rover_description/rviz/default.rviz`](rviz/default.rviz):
   * Set `Durability Policy: Transient Local`.
   * Set `Fixed Frame: base_link`.
   * Cleared stale hardcoded `Links: {}` and `Frames: {}` dictionaries so RViz dynamically enumerates links from the incoming URDF.
 
 ### 5.3 Gazebo DiffDrive Multi-Wheel Tag & Frequency Fix
 * **Symptom:** Odometry wasn't publishing at the intended frequency, and wheel rotations were slipping.
-* **Root Cause:** In [`gazebo_control.xacro`](urdf/gazebo_control.xacro#L36-L40), the SDF plugin used the deprecated tag `<odom_publisher_frequency>` instead of the modern Fortress tag `<odom_publish_frequency>`.
+* **Root Cause:** In [`gazebo_control.xacro`](urdf/gazebo_control.xacro), the SDF plugin used the deprecated tag `<odom_publisher_frequency>` instead of the modern Fortress tag `<odom_publish_frequency>`.
 * **Resolution:** Updated to `<odom_publish_frequency>50</odom_publish_frequency>`. Verified that both left wheels (`front_left_wheel_joint`, `rear_left_wheel_joint`) and right wheels (`front_right_wheel_joint`, `rear_right_wheel_joint`) are mapped under `<left_joint>` and `<right_joint>` tags to ensure proper 4-wheel skid-steer kinematics without an intermediate transmission.
 
 ### 5.4 Deterministic Spawning via URDF String
 * **Symptom:** Gazebo entity creator would occasionally hang on headless startup waiting for `/robot_description` on the ROS network.
 * **Root Cause:** Launching `ros_gz_sim create` with `-topic robot_description` required an asynchronous topic discovery handshake across the bridge.
-* **Resolution:** In [`sim.launch.py`](launch/sim.launch.py#L53-L62), `xacro.process_file()` generates `robot_description_raw` synchronously, which is passed directly to `create` via `-string robot_description_raw`.
+* **Resolution:** In [`sim.launch.py`](launch/sim.launch.py), `xacro.process_file()` generates `robot_description_raw` synchronously, which is passed directly to `create` via `-string robot_description_raw`.
 
 ### 5.5 Authoritative Drive Routing & Sim-Clock Watchdog in Drive Bridge
 * **Symptom:** Direct `/cmd_vel` subscription in [`sim_drive_bridge.py`](scripts/sim_drive_bridge.py) previously bypassed `drive_node`'s `/control_mode` lockout, `/sensitivity` scaling, and `/joy` priority arbitration.
-* **Resolution:** [`sim.launch.py`](launch/sim.launch.py#L141-L144) sets `subscribe_cmd_vel:=False` whenever `use_drive_node:=true`, forcing all velocity commands through `drive_node` into `/motor/*`, and [`sim_drive_bridge.py`](scripts/sim_drive_bridge.py#L54-L115) reconstructs SI $(v_x, \omega_z)$ using `wheel_separation` and `self.get_clock().now().nanoseconds` with a 500 ms watchdog stop.
+* **Resolution:** [`sim.launch.py`](launch/sim.launch.py) sets `subscribe_cmd_vel:=False` whenever `use_drive_node:=true`, forcing all velocity commands through `drive_node` into `/motor/*`, and [`sim_drive_bridge.py`](scripts/sim_drive_bridge.py) reconstructs SI $(v_x, \omega_z)$ using `wheel_separation` and `self.get_clock().now().nanoseconds` with a 500 ms watchdog stop.
 
 ---
 
@@ -212,7 +212,7 @@ During development and testing, several critical bugs were diagnosed and permane
 
 ### 6.1 URDF / Xacro Files ([`urdf/`](urdf))
 * [`rover.urdf.xacro`](urdf/rover.urdf.xacro): Main entry point. Loads physical dimensions from [`config/physical_params.yaml`](config/physical_params.yaml), defines `base_footprint`, `base_link`, instantiates the four wheels via `<xacro:macro name="wheel">`, and includes [`sensors.xacro`](urdf/sensors.xacro).
-* [`sensors.xacro`](urdf/sensors.xacro): Defines the simulated perception payload (`lidar_link`, `imu_link`, `camera_link` + optical frame) and attaches Gazebo Fortress `gpu_lidar`, `imu`, and `rgbd_camera` sensors parameterized from [`config/physical_params.yaml`](config/physical_params.yaml#L25-L56).
+* [`sensors.xacro`](urdf/sensors.xacro): Defines the simulated perception payload (`lidar_link`, `imu_link`, `camera_link` + optical frame) and attaches Gazebo Fortress `gpu_lidar`, `imu`, and `rgbd_camera` sensors parameterized from [`config/physical_params.yaml`](config/physical_params.yaml).
 * [`gazebo_control.xacro`](urdf/gazebo_control.xacro): Injects Gazebo Fortress plugins (`DiffDrive`, `JointStatePublisher`, and `Sensors`), defines surface friction coefficients ($\mu_1 = 0.8, \mu_2 = 0.8$, with directional friction vector `<fdir1>1 0 0</fdir1>`), and sets ambient/diffuse/specular visual materials.
 * [`inertial_macros.xacro`](urdf/inertial_macros.xacro): Provides standard mathematical formulas for moments of inertia:
   * Box: $I_{xx} = \frac{1}{12}m(y^2+z^2), \quad I_{yy} = \frac{1}{12}m(x^2+z^2), \quad I_{zz} = \frac{1}{12}m(x^2+y^2)$
@@ -232,7 +232,7 @@ During development and testing, several critical bugs were diagnosed and permane
 ## 7. Sensor & Customization Reference
 
 > [!TIP]
-> A 3D LiDAR (`lidar_link`), noisy MEMS IMU (`imu_link`), and RGB-D camera (`camera_link`) are **already implemented and active** in [`urdf/sensors.xacro`](urdf/sensors.xacro) and bridged in [`launch/sim.launch.py`](launch/sim.launch.py#L82-L121). Tune their mounting offsets, rates, FOV, and Gaussian noise parameters directly in [`config/physical_params.yaml`](config/physical_params.yaml#L25-L56). The snippets below serve as templates when adding *additional* sensors or actuators.
+> A 3D LiDAR (`lidar_link`), noisy MEMS IMU (`imu_link`), and RGB-D camera (`camera_link`) are **already implemented and active** in [`urdf/sensors.xacro`](urdf/sensors.xacro) and bridged in [`launch/sim.launch.py`](launch/sim.launch.py). Tune their mounting offsets, rates, FOV, and Gaussian noise parameters directly in [`config/physical_params.yaml`](config/physical_params.yaml). The snippets below serve as templates when adding *additional* sensors or actuators.
 
 1. **Add Sensor Link & Joint to URDF:**
    In [`rover.urdf.xacro`](urdf/rover.urdf.xacro), add the physical mount:
@@ -286,7 +286,7 @@ During development and testing, several critical bugs were diagnosed and permane
    ```
 
 3. **Bridge Topic in Launch File:**
-   In [`sim.launch.py`](launch/sim.launch.py#L66-L79), add the sensor topic to `parameter_bridge`:
+   In [`sim.launch.py`](launch/sim.launch.py), add the sensor topic to `parameter_bridge`:
    ```python
    '/scan@sensor_msgs/msg/LaserScan[ignition.msgs.LaserScan',
    ```
@@ -333,7 +333,7 @@ During development and testing, several critical bugs were diagnosed and permane
 ### 7.3 How to Re-Attach and Control the Robotic Arm
 
 1. **Uncomment Arm Include in URDF:**
-   In [`rover.urdf.xacro`](urdf/rover.urdf.xacro#L118-L120), uncomment line 119:
+   In [`rover.urdf.xacro`](urdf/rover.urdf.xacro), uncomment the `rover_arm.xacro` include (`<xacro:include filename="rover_arm.xacro" />`) after resolving CAD offsets relative to `lidar_link`:
    ```xml
    <xacro:include filename="rover_arm.xacro" />
    ```

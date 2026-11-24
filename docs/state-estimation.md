@@ -9,7 +9,7 @@ Two independent filters exist today. They do not feed each other.
 
 ## IMU telemetry (`telemetry`)
 
-Reads a BNO085 on I²C bus 7, address `0x4A`, enabling accelerometer, gyroscope, rotation vector and magnetometer reports. It publishes at `publish_rate` (20 Hz default):
+Reads a BNO085 on I²C bus 7, address `0x4A`, enabling accelerometer, gyroscope, and `BNO_REPORT_GAME_ROTATION_VECTOR` by default (`use_magnetometer:=false`, immune to motor-current EMI; `use_magnetometer:=true` enables 9-DoF `BNO_REPORT_ROTATION_VECTOR`). It publishes at `publish_rate` (20 Hz default):
 
 - `/imu/data_raw` — `Imu` with the sensor's raw quaternion, gyro (rad/s), accel (m/s²) and fixed diagonal covariances (accel 1.0, gyro 0.04, orientation 0.01).
 - `/imu/euler` — roll, pitch, yaw in **degrees** after subtracting tare offsets.
@@ -27,9 +27,9 @@ $$ x = [\underbrace{p_x, p_y, p_z}_{\text{position}},\ \underbrace{v_x, v_y, v_z
 
 **Transition** (step $\Delta t$ = `dt`, damping $\gamma$ = `velocity_damping` = 0.95, gravity $g = 9.81$):
 
-$$ g_b = g\,[-\sin\theta,\ \sin\phi\cos\theta,\ \cos\phi\cos\theta]^\top,\quad a' = a - g_b,\quad v^+ = \gamma v + a' \Delta t,\quad p^+ = p + \gamma v\,\Delta t + \tfrac12 a' \Delta t^2,\quad [\phi,\theta,\psi]^+ = [\phi,\theta,\psi] + g_{\text{gyro}}\Delta t $$
+$$ g_b = g\,[-\sin\theta,\ \sin\phi\cos\theta,\ \cos\phi\cos\theta]^\top,\quad a' = R_{nb}(\phi,\theta,\psi)(a - g_b),\quad v^+ = \gamma v + a' \Delta t,\quad p^+ = p + \gamma v\,\Delta t + \tfrac12 a' \Delta t^2,\quad [\phi,\theta,\psi]^+ = [\phi,\theta,\psi] + E(\phi,\theta)\,g_{\text{gyro}}\Delta t $$
 
-$g_b$ is gravity expressed in the body frame from the estimated roll $\phi$ and pitch $\theta$. (It used to be $[0,0,g]$ regardless of attitude, so on a slope $g\sin(\text{tilt})$ leaked into the horizontal acceleration: about 2 m/s of phantom velocity at rest on an 11.5° tilt.) Accel and gyro states are carried forward unchanged (random walk). Angles are wrapped to $[-\pi, \pi]$ after each update.
+$g_b$ is gravity expressed in the body frame from the estimated roll $\phi$ and pitch $\theta$, rotated into world ENU via $R_{nb}$ (it used to subtract $[0,0,g]$ without rotating, leaking $g\sin(\text{tilt})$ into horizontal acceleration), and $E(\phi,\theta)$ converts body rates $[p, q, r]^\top$ into ZYX Euler rates. Accel and gyro states are carried forward unchanged (random walk). Angles are wrapped to $[-\pi, \pi]$ after each update.
 
 **Observation** (9-vector with `use_orientation:=true`, the default; 6-vector without):
 
@@ -39,9 +39,9 @@ $(\phi_m, \theta_m, \psi_m)$ is the ZYX Euler conversion of the BNO085's fused q
 
 **Noise**: process $Q = 0.01\,I_{15}$ (`process_noise`), measurement $R = \operatorname{diag}(1,1,1,\ 0.04,0.04,0.04,\ \sigma^2_o,\sigma^2_o,\sigma^2_o)$ with $\sigma^2_o$ = `orientation_variance` = 0.01 rad², initial covariance $P_0 = 100\,I_{15}$, initial mean zero except $a_z = 9.81$.
 
-**Step size.** The filter assumes a fixed $\Delta t$. The `imu.launch.py` launch file now sets `dt = 1 / publish_rate` so the filter step matches the telemetry period; run standalone, `dt` defaults to 0.1 s and must be set by hand.
+**Step size and default activation.** `imu.launch.py` leaves the redundant 15-state AUKF disabled by default (`run_kalman_filter:=false`); when enabled, `imu.launch.py` sets `dt = 1 / publish_rate` and the node also measures actual $\Delta t$ from message header timestamps (clamped to $[10^{-3}, 0.5]$ s).
 
-**What it can and cannot do.** Orientation now follows the BNO085's own fusion, smoothed by the gyro, instead of drifting without bound as it did when only the gyro was integrated. Position and velocity are still integrals of accelerometer noise in the **body** frame (not rotated into a world frame), bounded only by the 0.95 damping, so `/imu/odometry` is **off by default** (`publish_odometry:=true` enables it with a warning) and must not be used for navigation. For heading, use `/imu/euler` (tared) or `/ekf/odometry`. Tested in WSL with synthetic data: 10 s at rest on an 11.5° tilt with the heading crossing ±180° every sample gave roll 0.200 rad, |yaw| 3.136 rad and a residual velocity of 0.06 m/s.
+**What it can and cannot do.** Orientation follows the BNO085's own fusion, smoothed by the gyro, and linear acceleration is rotated via $R_{nb}$ into world ENU. Position and velocity are still double integrals of noisy consumer IMU acceleration without wheel or GNSS aiding, so `/imu/odometry` is **off by default** (`publish_odometry:=true` enables it with a warning) and must not be used for navigation. For heading, use `/imu/euler` (tared) or `/ekf/odometry`. Tested in WSL with synthetic data: 10 s at rest on an 11.5° tilt with the heading crossing ±180° every sample gave roll 0.200 rad, |yaw| 3.136 rad and a residual velocity of 0.06 m/s.
 
 ## Rover EKF (`ekf_node`) — 5-state
 
@@ -66,26 +66,26 @@ $Q = \operatorname{diag}(0.05, 0.05, 0.01, 0.1, 0.05)$ per nominal step. The dam
 | Parameter | Default | Meaning |
 |---|---|---|
 | `imu_yaw_offset_deg` | 90 | $\theta = \psi_{imu} + $ offset. `/imu/euler` yaw is counter-clockwise with 0 where `~/calibrate` was called; the team tares facing true north, so 90 converts it to ENU. (It used to be taken as ENU directly, putting dead reckoning 90° off the GPS axes.) |
-| `speed_per_motor_command` | 1.0 | m/s per unit `/motor/*` command: 1.0 for `vesc_can_driver_node` in metric mode, 1.5 for the simulator's `sim_drive_bridge` |
+| `speed_per_motor_command` | 1.0 | m/s per unit `/motor/*` command (`max_wheel_speed` in SI `drive_node` / `sim_drive_bridge`) |
 | `fuse_cmd_vel` | false | `/cmd_vel` was fused as a speed measurement *in addition to* `/motor/*` (the same command counted twice); now off |
 | `datum_latitude`, `datum_longitude` | NaN | origin of $X, Y$; NaN = first GPS fix. Set to NAVnode's home so both share a frame |
 | `use_gps` | true | false = GNSS is not subscribed (Meteorite task) |
 
-**Measurement updates** (standard EKF form $K = P H^\top (H P H^\top + R)^{-1}$, $x \leftarrow x + K(z - Hx)$, $P \leftarrow (I - KH)P$; angle innovations are wrapped to $[-\pi, \pi]$):
+**Measurement updates** (standard EKF gain $K = P H^\top (H P H^\top + R)^{-1}$, $x \leftarrow x + K(z - Hx)$, symmetric Joseph covariance update $P \leftarrow (I - KH)P(I - KH)^\top + K R K^\top$; angle innovations are wrapped to $[-\pi, \pi]$):
 
 | Source | $z$ | $H$ | $R$ |
 |---|---|---|---|
 | IMU yaw (`/imu/euler`, degrees → rad, + `imu_yaw_offset_deg`) | $\theta_{imu}$ | selects $\theta$ | 0.01 |
 | IMU yaw rate (`/imu/data_raw`) | $\omega_z$ | selects $\omega$ | 0.005 |
-| Measured wheel speed (`/wheel_states` from VESC ERPM: mean wheel rad/s × `wheel_radius`, at least 2 wheels, fresh < 0.3 s) | $v_{wheel}$ | selects $v$ | 0.02 |
+| Measured wheel speed (`/wheel_states` from VESC ERPM: $\frac{1}{2}(\bar{\omega}_L + \bar{\omega}_R) \cdot$ `wheel_radius`, requiring both L and R wheels when named, fresh < 0.3 s) | $v_{wheel}$ | selects $v$ | 0.02 |
 | Otherwise commanded wheel speed (`/motor/*` mean × `speed_per_motor_command`, while a command arrived < 0.5 s ago, zero included) | $v_{wheel}$ | selects $v$ | 0.08 |
 | GPS (`/gps/fix`) | $[x_{east}, y_{north}]$ | selects $X, Y$ | the message's east/north variances when `position_covariance_type` is not UNKNOWN (from `gps_bridge_node`: $(\text{HDOP} \cdot \text{UERE})^2$), otherwise $\operatorname{diag}(1.5, 1.5)$; messages with `status < 0` (no fix) are ignored |
 
 Notes on the inputs:
 
-- **Wheel speed** is the mean of the four `/motor/*` values, $(fl + rl + fr + rr)/4$, scaled by `speed_per_motor_command`. These are **commands**, used only when no measured speed is available: with the VESCs' CAN status enabled, `/wheel_states` (see [drive-system.md](drive-system.md)) replaces them, so a stalled motor shows up; wheel slip is still invisible to both. `wheel_radius` (default 0.10, the driver's default) must be set to the measured wheel. A zero command is fused too (it used to be skipped, so a stopped rover kept coasting on $v$); once commands are older than 0.5 s (the drive deadman), nothing is fused.
-- **GPS** uses `datum_latitude`/`datum_longitude` as the origin, or the first valid fix if they are not set (then the origin is *not* NAVnode's home waypoint), and an equirectangular approximation with Earth radius $R_E$ = 6 371 000 m: $x_{east} = \Delta\lambda\,R_E\cos\varphi_0$, $y_{north} = \Delta\varphi\,R_E$, with deltas in radians. Fixes with status < 0, NaN, or both coordinates ≈ 0 are ignored.
-- **Output**: `Odometry` (position and heading; 6×6 pose covariance filled from $P$ for $X,Y,\theta$ only), Euler angles in degrees (roll/pitch passed straight through from the IMU), and the `odom → base_link` TF.
+- **Wheel speed** is the mean of the four `/motor/*` values, $(fl + rl + fr + rr)/4$, scaled by `speed_per_motor_command`. These are **commands**, used only when no measured speed is available: with the VESCs' CAN status enabled, `/wheel_states` (see [drive-system.md](drive-system.md)) replaces them, so a stalled motor shows up (one-sided wheel loss is rejected when joint names are present); wheel slip is still invisible to both. `wheel_radius` defaults to `0.15 m` loaded from `rover_description/config/physical_params.yaml` (matching `vesc_can_driver_node` unless overridden; measure the physical tire outdoors). A zero command is fused too (it used to be skipped, so a stopped rover kept coasting on $v$); once commands are older than 0.5 s (the drive deadman), nothing is fused.
+- **GPS** uses `datum_latitude`/`datum_longitude` as the origin, or the first valid fix if they are not set (then the origin is *not* NAVnode's home waypoint), and WGS-84 tangent-plane meridional ($R_M$) and prime-vertical ($R_N$) radii: $x_{east} = \Delta\lambda\,R_N(\varphi_0)\cos\varphi_0$, $y_{north} = \Delta\varphi\,R_M(\varphi_0)$, with deltas in radians. Fixes with status < 0, NaN, or both coordinates ≈ 0 are ignored.
+- **Output**: `Odometry` (position, heading, and twist `(v, omega)`, with 6×6 pose and twist covariances filled from $P$), Euler angles in degrees (roll/pitch passed straight through from the IMU), and the `odom → base_link` TF when `publish_tf:=true` (`false` in Gazebo `sim.launch.py`, where DiffDrive owns `odom → base_footprint`).
 
 ### Fixes made in this repository
 

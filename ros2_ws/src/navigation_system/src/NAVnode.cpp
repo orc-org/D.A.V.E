@@ -913,6 +913,7 @@ void NAVnode::mainTimer(){
 
 void NAVnode::gpsFixCallback(const sensor_msgs::msg::NavSatFix::SharedPtr msg){
     if (msg->status.status < 0 || !std::isfinite(msg->latitude) || !std::isfinite(msg->longitude)) {
+        have_prev_fix_ = false;
         return;
     }
     if (std::abs(msg->latitude) < 1e-4 && std::abs(msg->longitude) < 1e-4) {
@@ -1268,6 +1269,7 @@ void NAVnode::selectRouteToEdit(const std::shared_ptr<SelectRoute::Request> requ
 }
 
 void NAVnode::rebaseWaypointsToHome(){
+    have_prev_fix_ = false;
     if (currentPosition != nullptr) {
         currentPosition->EarthCentred_To_Local();
     }
@@ -1316,6 +1318,7 @@ bool NAVnode::ensureHome(){
         return false;
     }
     currentPosition->setHome(currentPosition, 0);
+    rebaseWaypointsToHome();
     RCLCPP_WARN(this->get_logger(), "Home was not set: it is now the current position (lat %.7f, lon %.7f). "
                                     "Call ResetHome to choose it explicitly.",
                 currentPosition->getLatitude(), currentPosition->getLongitude());

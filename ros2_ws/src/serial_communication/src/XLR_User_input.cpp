@@ -22,6 +22,9 @@ public:
 
     void readInputLoop() {
         while (rclcpp::ok() && (std::cin >> message)) {
+            if (!rclcpp::ok()) {
+                break;
+            }
             converse(message);
         }
     }
@@ -48,7 +51,7 @@ private:
 int main(int argc, char** argv) {
     rclcpp::init(argc, argv);
     auto node = std::make_shared<XLR_UI>();
-    std::thread input_thread(&XLR_UI::readInputLoop, node.get());
+    std::thread input_thread(&XLR_UI::readInputLoop, node);
     input_thread.detach();
     rclcpp::spin(node);
     rclcpp::shutdown();

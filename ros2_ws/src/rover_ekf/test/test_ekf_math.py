@@ -4,6 +4,7 @@ import numpy as np
 from rover_ekf.ekf_node import (
     compute_wheel_forward_omega,
     joseph_update,
+    load_wheel_radius_from_config,
     predict_unicycle_state,
     wgs84_enu_offset,
     wrap_angle_rad,
@@ -63,3 +64,18 @@ def test_predict_then_wheel_update_does_not_underestimate_steady_velocity():
 
     assert abs(x[3] - 1.0) < 0.01
     assert abs(x[0] - 2.0) < 0.1
+
+
+def test_load_wheel_radius_from_config_matches_physical_params(monkeypatch):
+    assert math.isclose(load_wheel_radius_from_config(default=0.99), 0.15)
+    assert math.isclose(
+        load_wheel_radius_from_config(default=0.15, config_path='/nonexistent/physical_params.yaml'),
+        0.15,
+    )
+    import ament_index_python.packages as ament_pkgs
+    monkeypatch.setattr(
+        ament_pkgs,
+        'get_package_share_directory',
+        lambda _pkg: '/nonexistent/rover_description_share',
+    )
+    assert math.isclose(load_wheel_radius_from_config(default=0.12), 0.12)

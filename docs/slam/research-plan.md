@@ -89,7 +89,7 @@ Gate: pick the algorithm with the lowest drift that holds ≥ 10 Hz pose output 
 
 Method: implement the velocity update and the aligned pose update ([architecture.md](architecture.md#fusion--one-global-pose-existing-code-extended)); compare three configurations on the E1 bags: (a) current EKF, (b) + LIO velocity, (c) + LIO pose.
 
-Also settle the yaw-convention and frame-origin questions in [known-issues.md](../known-issues.md#2-open--needs-measurement-or-a-team-decision) (items 4–6) as part of this experiment.
+Also settle the yaw-convention and frame-origin questions in [known-issues.md](../known-issues.md#2-open--needs-hardware-verification-measurement-or-autonomy-development) (items 4–6) as part of this experiment.
 
 Gate: (c) or (b) must beat (a) on drift and not degrade when GNSS is degraded.
 

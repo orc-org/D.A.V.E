@@ -233,6 +233,7 @@ class ArmStepperDriverNode(Node):
         self.last_log_time = 0.0
 
         self._cb_group = ReentrantCallbackGroup()
+        self._hw_lock = threading.Lock()
 
         # ROS 2 Subscriptions & Publishers
         self.joint_sub = self.create_subscription(JointState, 'joint_states', self.joint_state_callback, 10)
@@ -288,7 +289,14 @@ class ArmStepperDriverNode(Node):
             self.target_arm_step = int(self.target_arm_angle * self.arm_steps_per_rad)
 
     def gripper_target_callback(self, msg):
-        self.target_gripper_step = int(msg.data)
+        with self._hw_lock:
+            self.target_gripper_step = int(msg.data)
+
+    def _halt_gripper_motion(self):
+        with self._hw_lock:
+            self.target_gripper_step = self.current_gripper_step
+            self.target_gripper_pos = self.current_gripper_pos
+            self.gripper_hw.stop_pwm()
 
     def control_and_step_loop(self):
         now_time = time.monotonic()
@@ -334,31 +342,32 @@ class ArmStepperDriverNode(Node):
                 self.arm_hw.stop_pwm()
 
         # 2. Process Gripper Stepper Motor (DM556Y #2)
-        is_gripper_manual_active = (now_time - self.last_gripper_manual_vel_time < 0.4) and (abs(self.gripper_manual_vel_input) > 0.01)
+        with self._hw_lock:
+            is_gripper_manual_active = (now_time - self.last_gripper_manual_vel_time < 0.4) and (abs(self.gripper_manual_vel_input) > 0.01)
 
-        if is_gripper_manual_active:
-            grip_step_dir = 1 if self.gripper_manual_vel_input > 0 else -1
-            max_gripper_sec = self.gripper_max_vel * self.gripper_steps_per_m
-            steps_added = int(max_gripper_sec * dt)
-            steps_to_move = max(1, steps_added)
-            
-            self.current_gripper_step += grip_step_dir * steps_to_move
-            self.target_gripper_step = self.current_gripper_step
-            self.gripper_hw.start_pwm(forward=(grip_step_dir > 0), freq_hz=self.gripper_step_freq_hz)
-            self.publish_gripper_state()
-        else:
-            gripper_step_diff = self.target_gripper_step - self.current_gripper_step
-            if abs(gripper_step_diff) > 2:
-                step_dir = 1 if gripper_step_diff > 0 else -1
-                self.gripper_hw.start_pwm(forward=(step_dir > 0), freq_hz=self.gripper_step_freq_hz)
-                
+            if is_gripper_manual_active:
+                grip_step_dir = 1 if self.gripper_manual_vel_input > 0 else -1
                 max_gripper_sec = self.gripper_max_vel * self.gripper_steps_per_m
                 steps_added = int(max_gripper_sec * dt)
-                steps_to_move = min(abs(gripper_step_diff), max(1, steps_added))
-                self.current_gripper_step += step_dir * steps_to_move
+                steps_to_move = max(1, steps_added)
+                
+                self.current_gripper_step += grip_step_dir * steps_to_move
+                self.target_gripper_step = self.current_gripper_step
+                self.gripper_hw.start_pwm(forward=(grip_step_dir > 0), freq_hz=self.gripper_step_freq_hz)
                 self.publish_gripper_state()
             else:
-                self.gripper_hw.stop_pwm()
+                gripper_step_diff = self.target_gripper_step - self.current_gripper_step
+                if abs(gripper_step_diff) > 2:
+                    step_dir = 1 if gripper_step_diff > 0 else -1
+                    self.gripper_hw.start_pwm(forward=(step_dir > 0), freq_hz=self.gripper_step_freq_hz)
+                    
+                    max_gripper_sec = self.gripper_max_vel * self.gripper_steps_per_m
+                    steps_added = int(max_gripper_sec * dt)
+                    steps_to_move = min(abs(gripper_step_diff), max(1, steps_added))
+                    self.current_gripper_step += step_dir * steps_to_move
+                    self.publish_gripper_state()
+                else:
+                    self.gripper_hw.stop_pwm()
 
         # Throttled logging output
         if now_time - self.last_log_time >= 1.0:
@@ -371,9 +380,10 @@ class ArmStepperDriverNode(Node):
 
     def execute_gripper_goal(self, goal_handle):
         target_pos = max(0.0, min(1.0, float(goal_handle.request.position)))
-        self.target_gripper_pos = target_pos
-        finger_linear_pos = (1.0 - self.target_gripper_pos) * 0.2
-        self.target_gripper_step = int(finger_linear_pos * self.gripper_steps_per_m)
+        with self._hw_lock:
+            self.target_gripper_pos = target_pos
+            finger_linear_pos = (1.0 - self.target_gripper_pos) * 0.2
+            self.target_gripper_step = int(finger_linear_pos * self.gripper_steps_per_m)
 
         self.get_logger().info(f'Action Gripper Command received: moving to target pos {target_pos:.2f}')
 
@@ -382,11 +392,13 @@ class ArmStepperDriverNode(Node):
 
         while rclpy.ok() and abs(self.current_gripper_pos - target_pos) > 0.01:
             if goal_handle.is_cancel_requested:
+                self._halt_gripper_motion()
                 goal_handle.canceled()
                 result = GripperCommand.Result()
                 result.success = False
                 return result
             if time.monotonic() > deadline:
+                self._halt_gripper_motion()
                 goal_handle.abort()
                 result = GripperCommand.Result()
                 result.success = False
@@ -394,6 +406,12 @@ class ArmStepperDriverNode(Node):
             feedback_msg.progress = float(self.current_gripper_pos)
             goal_handle.publish_feedback(feedback_msg)
             time.sleep(0.1)
+
+        if not rclpy.ok():
+            self._halt_gripper_motion()
+            result = GripperCommand.Result()
+            result.success = False
+            return result
 
         goal_handle.succeed()
         result = GripperCommand.Result()

@@ -27,7 +27,11 @@ FLPID=""
 cleanup_proc() {
     kill -INT ${FLPID:-} "$FL" "$TU" "$PT" 2>/dev/null || true
     for _ in $(seq 10); do
-        kill -0 "$FL" ${FLPID:-} "$TU" "$PT" 2>/dev/null || break
+        alive=0
+        for p in ${FLPID:-} "$FL" "$TU" "$PT"; do
+            kill -0 "$p" 2>/dev/null && alive=1
+        done
+        [ "$alive" -eq 0 ] && break
         sleep 0.5
     done
     kill -TERM ${FLPID:-} "$FL" "$TU" "$PT" 2>/dev/null || true
@@ -37,7 +41,7 @@ sleep 4
 FLPID=$(pgrep -f "lib/fast_lio/fastlio_mapping" | head -1 || true)
 ( while [ -n "$FLPID" ] && kill -0 "$FLPID" 2>/dev/null; do ps -o %cpu=,rss= -p "$FLPID"; sleep 2; done ) > "$OUT/usage.log" &
 
-ros2 bag play "$BAG" --clock --rate "${RATE:-1.0}" --topics /clock /lidar/points /lidar/imu > "$OUT/play.log" 2>&1
+ros2 bag play "$BAG" --rate "${RATE:-1.0}" --topics /clock /lidar/points /lidar/imu > "$OUT/play.log" 2>&1
 sleep 3
 cleanup_proc
 trap - EXIT

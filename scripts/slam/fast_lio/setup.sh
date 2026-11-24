@@ -21,6 +21,7 @@ if [ ! -d FAST_LIO ]; then
     git clone --branch ROS2 https://github.com/hku-mars/FAST_LIO.git
 fi
 git -C FAST_LIO fetch -q origin ROS2
+git -C FAST_LIO checkout -- .
 git -C FAST_LIO checkout -q "$FAST_LIO_COMMIT"
 git -C FAST_LIO submodule update --init --recursive
 # drop unused pcl_ros CMake dependency (FAST_LIO only uses pcl_conversions + PCL common/io/filters + tf2_ros)

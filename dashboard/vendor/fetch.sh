@@ -9,7 +9,7 @@
 #   dashboard/vendor/fetch.sh --verify   check the committed copies without downloading them
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-VERIFY=0; [ "${1:-}" = "--verify" ] && VERIFY=1
+VERIFY=0; if [ "${1:-}" = "--verify" ]; then VERIFY=1; fi
 
 FILES="
 eventemitter2@6.4.9 lib/eventemitter2.js LICENSE.txt
@@ -38,7 +38,7 @@ while read -r PKG PATHS; do
             echo "ok    $PKG/$P"
         else
             echo "BAD   $PKG/$P"; FAILS=$((FAILS+1))
-            [ "$VERIFY" -eq 0 ] && rm -f "$OUT"
+            if [ "$VERIFY" -eq 0 ]; then rm -f "$OUT"; fi
         fi
     done
 done <<< "$FILES"

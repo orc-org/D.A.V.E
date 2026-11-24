@@ -5,6 +5,7 @@ from rclpy.node import Node
 from sensor_msgs.msg import NavSatFix, NavSatStatus
 from std_msgs.msg import String
 import serial
+import time
 
 def verify_nmea_checksum(line: str) -> bool:
     """Validate NMEA 0183 checksum (*XX)."""

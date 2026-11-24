@@ -241,6 +241,17 @@ def test_ekf_and_nav_seam(log_dir):
         assert abs(vx - 0.60) < 0.05 and odom_msgs[-1].twist.covariance[0] > 0.0, f'EKF steady vx wrong: {vx}'
         print(f'PASS: EKF converged under sim /clock to {vx:.3f} m/s (target 0.600) with populated twist cov')
 
+        # B2: ensureHome() auto-origin immediately rebases currentPosition so range2waypoint ~ 30 m before explicit ResetHome
+        fut_eh = cli_add.call_async(AddLocalWaypoint.Request(x=0.0, y=30.0))
+        assert _spin_until(node, lambda: fut_eh.done(), 3.0)
+        nav_msgs.clear()
+        assert _spin_until(node, lambda: len(nav_msgs) >= 3, 2.0)
+        assert abs(nav_msgs[-1].range2waypoint - 30.0) < 1.0, \
+            f'ensureHome() left stale ECEF/unrebased currentPosition: range={nav_msgs[-1].range2waypoint}'
+        fut_rm_eh = cli_rem.call_async(RemoveLocalWaypoint.Request(x=0.0, y=30.0))
+        assert _spin_until(node, lambda: fut_rm_eh.done(), 3.0)
+        print('PASS: ensureHome() immediately rebased local pose without waiting for another /gps/fix')
+
         # C: ResetHome, AddLocalWaypoint (0, 30), ResetHome 20m North -> verify rebased waypoint_local_y ~ 10 m
         fut_h1 = cli_home.call_async(ResetHome.Request(latitude=51.46, longitude=-112.70, password=741021))
         assert _spin_until(node, lambda: fut_h1.done(), 3.0) and fut_h1.result().success
@@ -257,6 +268,21 @@ def test_ekf_and_nav_seam(log_dir):
         assert abs(nav_msgs[-1].waypoint_local_y - 10.0) < 1.0 and abs(nav_msgs[-1].range2waypoint - 30.0) < 1.0, \
             f'ResetHome failed to rebase waypoint cleanly: y={nav_msgs[-1].waypoint_local_y}, r={nav_msgs[-1].range2waypoint}'
         print(f'PASS: ResetHome rebase moved waypoint_local_y to {nav_msgs[-1].waypoint_local_y:.2f} m (range preserved {nav_msgs[-1].range2waypoint:.2f} m)')
+
+        # C2: Stationary /gps/fix after ResetHome must not compute old-home vs new-home speed spike
+        nav_msgs.clear()
+        gf_post = NavSatFix()
+        gf_post.header.stamp.sec = 104
+        gf_post.header.stamp.nanosec = 0
+        gf_post.status.status = NavSatStatus.STATUS_FIX
+        gf_post.latitude = 51.46
+        gf_post.longitude = -112.70
+        gf_post.altitude = 792.0
+        pub_gps.publish(gf_post)
+        assert _spin_until(node, lambda: len(nav_msgs) >= 3, 2.0)
+        assert nav_msgs[-1].speed < 1.0, \
+            f'Post-ResetHome /gps/fix caused speed spike: {nav_msgs[-1].speed}'
+        print(f'PASS: Post-ResetHome stationary /gps/fix kept speed={nav_msgs[-1].speed:.2f} km/h (no frame-shift spike)')
 
         # D: Step past end of route via TargetNextWaypoint and confirm validateTarget doesn't wrap back
         fut_nx = cli_next.call_async(VoidService.Request())
@@ -329,6 +355,26 @@ def test_arm_coordinator_and_stepper_seam(log_dir):
         finger_val = joint_states[-1].position[idx_l]
         assert -0.021 <= finger_val <= 0.041, f'Finger joint out of URDF [-0.02, 0.04]: {finger_val}'
         print(f'PASS: GripperCommand(0.5) succeeded (steps={gripper_states[-1]:.0f}, URDF finger={finger_val:.4f} m)')
+
+        # A2: Cancel mid-move GripperCommand(0.0) -> target must reset so stepper stops moving immediately
+        goal_msg2 = GripperCommand.Goal()
+        goal_msg2.position = 0.0
+        send_fut2 = ac.send_goal_async(goal_msg2)
+        assert _spin_until(node, lambda: send_fut2.done(), 3.0)
+        gh2 = send_fut2.result()
+        assert gh2.accepted
+        assert _spin_until(node, lambda: gripper_states and gripper_states[-1] > 21500.0, 3.0), \
+            f'Gripper did not begin moving toward 40000 steps: {gripper_states[-1]}'
+        cancel_fut = gh2.cancel_goal_async()
+        assert _spin_until(node, lambda: cancel_fut.done(), 3.0)
+        res_fut2 = gh2.get_result_async()
+        assert _spin_until(node, lambda: res_fut2.done(), 3.0)
+        assert not res_fut2.result().result.success, 'Canceled GripperCommand reported success=True'
+        stopped_steps = gripper_states[-1]
+        _spin_until(node, lambda: False, 0.6)
+        assert abs(gripper_states[-1] - stopped_steps) < 500.0 and gripper_states[-1] < 38000.0, \
+            f'Gripper kept moving after cancel! stopped={stopped_steps}, later={gripper_states[-1]}'
+        print(f'PASS: Canceled GripperCommand halted stepper motion cleanly at {gripper_states[-1]:.0f} steps')
 
         # B: Auto mode with allow_base_motion=false must not drive base wheels
         cmd_vels.clear()

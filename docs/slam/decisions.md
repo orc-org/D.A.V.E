@@ -56,7 +56,7 @@ networkingMode=nat
 |---|---|
 | Distribution | Ubuntu 22.04.5 LTS, stored on the D drive at `D:\WSL\Ubuntu-22.04` (disk image `ext4.vhdx`); swap file at `D:\WSL\swap.vhdx` |
 | User | `dave`, member of `sudo` with passwordless sudo (convenient for a local dev VM; remove `/etc/sudoers.d/90-dave` to change) |
-| WSL config | `C:\Users\canad\.wslconfig`: 10 GB memory, 8 processors, NAT networking (mirrored mode broke local DDS discovery, see above) |
+| WSL config | `%USERPROFILE%\.wslconfig`: 10 GB memory, 8 processors, NAT networking (mirrored mode broke local DDS discovery, see above) |
 | ROS | ROS 2 Humble `ros-base`, `ros-dev-tools`, colcon, rosdep, plus the packages the workspace uses (rosbridge, cv_bridge, xacro, robot_state_publisher, tf2, OpenCV, NumPy/SciPy/pyserial). Gazebo (Fortress, via `ros-humble-ros-gz`) and RViz were installed on 2026-11-09 for the sim sensors (about 2.4 GB); Isaac ROS is **not** installed yet, on purpose |
 | Repository | Cloned inside the Linux file system at `~/D.A.V.E` (not under `/mnt/d`); update it with `git pull` from the Windows repository path |
 | Workspace build | `colcon build --symlink-install`: **all 16 packages build**. `navigation_system` needs `raylib`, installed from source (v5.0, static) into `~/opt/raylib` with no system-wide install; configure with `PKG_CONFIG_PATH=$HOME/opt/raylib/lib/pkgconfig` and `-Draylib_DIR=$HOME/opt/raylib/lib/cmake/raylib -Draylib_USE_STATIC_LIBS=ON` |
@@ -69,7 +69,7 @@ The build also surfaced a real bug (`SerialPort::write` length), fixed and recor
 
 1. **Browser dashboard / rosbridge.** Needs no ROS on the laptop: open `http://<jetson>:8000`. Already works ([dashboard-and-network.md](../dashboard-and-network.md)).
 2. **SSH plus the ROS command line.** `ssh` to the Jetson and run `ros2 topic hz`, `ros2 node list`, `ros2 bag record` there; copy bags to the laptop for analysis. Lowest risk.
-3. **Direct DDS from WSL2** (not available under NAT; needs mirrored mode, which broke local discovery here, or a VPN-style bridge). Add the laptop's address to the Jetson's static peer list in [`fastdds_profiles.xml`](../../fastdds_profiles.xml) (the profile uses unicast peers, not multicast) and use the same `ROS_DOMAIN_ID`. Gives live RViz of the Jetson's topics. Large point clouds over Wi-Fi will lag; subscribe to downsampled or compressed topics.
+3. **Direct DDS from WSL2** (not available under NAT; needs mirrored mode, which broke local discovery here, or a VPN-style bridge). Add the laptop's address to the Jetson's static peer list in [`fastdds_profiles.xml`](../../fastdds_profiles.xml) (the profile uses hybrid multicast `239.255.0.1` plus static unicast peers) and use the same `ROS_DOMAIN_ID`. Gives live RViz of the Jetson's topics. Large point clouds over Wi-Fi will lag; subscribe to downsampled or compressed topics.
 4. **Record on the rover, analyse offline.** Best for SLAM work: [`record_bag.sh`](../../scripts/slam/record_bag.sh), copy the bag, replay in WSL2.
 
 ### Does a Raspberry Pi in the middle help?
