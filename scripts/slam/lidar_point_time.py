@@ -59,6 +59,9 @@ class LidarPointTime(Node):
         self.create_subscription(PointCloud2, self.get_parameter('input_topic').value, self.cb, qos_profile_sensor_data)
 
     def cb(self, msg):
+        if msg.point_step == 0:
+            self.get_logger().error('input cloud has point_step 0; dropping it', throttle_duration_sec=5.0)
+            return
         raw = bytes(msg.data)
         x, y, z = (read_field(msg, raw, n) for n in ('x', 'y', 'z'))
         if x is None or y is None or z is None:

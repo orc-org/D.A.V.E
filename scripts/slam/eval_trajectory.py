@@ -16,7 +16,9 @@ Metrics (positions in metres, orientations in degrees)
   ATE rot RMSE      RMS orientation error after global Umeyama rotation + fixed sensor extrinsic fit
   z drift           largest height excursion both in raw estimate frame and relative to aligned ground truth
   loop closure err  vector closure residual |(aligned end - start) - (gt end - start)| and % of path
-  RPE 10 m          Sturm et al. (2012) relative translation and rotation error per 10 m of true travel
+  RPE 10 m          Sturm et al. (2012) relative translation and rotation error per 10 m of true travel;
+                    translation is compared in each segment's start frame when orientations are available
+                    ("local"), otherwise in the aligned world frame ("world")
 Requires: numpy, rosbags (pip install --user numpy "rosbags==0.9.23").
 """
 import argparse
@@ -61,6 +63,8 @@ def read_clock_map(bag):
             msg = reader.deserialize(raw, conn.msgtype)
             sim.append(msg.clock.sec + msg.clock.nanosec * 1e-9)
             recv.append(t * 1e-9)
+    if len(sim) < 2:
+        raise ValueError(f'--est-clock sim needs at least 2 /clock messages in the bag, found {len(sim)}')
     sim, recv = np.array(sim), np.array(recv)
     order = np.argsort(sim)
     return sim[order], recv[order]
@@ -226,7 +230,15 @@ def score_trajectory(est, gt_t, gt_p, gt_q=None, sim_recv=None, segment_m=10.0):
     ok = j < len(dist)
     if ok.any():
         i_idx, j_idx = np.nonzero(ok)[0], j[ok]
-        rpe_trans = np.linalg.norm((ea[j_idx] - ea[i_idx]) - (g[j_idx] - g[i_idx]), axis=1)
+        d_est = ea[j_idx] - ea[i_idx]
+        d_gt = g[j_idx] - g[i_idx]
+        if R_est_aligned is not None:
+            # Sturm et al. (2012): compare the displacements in each segment's own start frame, so heading
+            # error accumulated before the segment is not counted as translation error inside it.
+            d_est = np.einsum('nji,nj->ni', R_est_aligned[i_idx], d_est)
+            d_gt = np.einsum('nji,nj->ni', R_gt_seq[i_idx], d_gt)
+        metrics['rpe_frame'] = 'local' if R_est_aligned is not None else 'world'
+        rpe_trans = np.linalg.norm(d_est - d_gt, axis=1)
         metrics['rpe_mean_m'] = float(rpe_trans.mean())
         metrics['rpe_max_m'] = float(rpe_trans.max())
         metrics['rpe_pct'] = float(100.0 * rpe_trans.mean() / segment_m)
@@ -276,7 +288,7 @@ def main():
         if 'rpe_rot_mean_deg' in m:
             rot_str = f' | rot mean {m["rpe_rot_mean_deg"]:.3f} deg (max {m["rpe_rot_max_deg"]:.3f} deg)'
         print(
-            f'RPE {m["segment_m"]:.0f} m              : mean {m["rpe_mean_m"]:.3f} m ({m["rpe_pct"]:.2f} %), '
+            f'RPE {m["segment_m"]:.0f} m ({m["rpe_frame"]:5s})      : mean {m["rpe_mean_m"]:.3f} m ({m["rpe_pct"]:.2f} %), '
             f'max {m["rpe_max_m"]:.3f} m ({m["rpe_segments"]} segments){rot_str}'
         )
 
