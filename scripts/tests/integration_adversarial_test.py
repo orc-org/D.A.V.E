@@ -26,7 +26,9 @@ from std_msgs.msg import Bool, Float32, String
 
 def _spawn(cmd, log_path):
     f = open(log_path, 'w')
-    p = subprocess.Popen(cmd, stdout=f, stderr=f, preexec_fn=os.setsid)
+    # Run inside the temporary log folder: NAVnode writes its track log relative to the current
+    # directory (src/navigation_system/captainsLogs), which would otherwise land in the caller's checkout.
+    p = subprocess.Popen(cmd, stdout=f, stderr=f, preexec_fn=os.setsid, cwd=os.path.dirname(log_path))
     return p, f
 
 
