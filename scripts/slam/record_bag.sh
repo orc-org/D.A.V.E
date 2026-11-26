@@ -18,7 +18,12 @@
 set -euo pipefail
 
 NAME="${1:-run_$(date +%Y%m%d_%H%M%S)}"
+NAME="${NAME%/}"   # "run1/" would otherwise put the metadata inside the bag folder as run1/.meta
+case "$NAME" in
+    ''|*/*) echo "run name must be a plain folder name (no '/'), got: ${1:-}" >&2; exit 2 ;;
+esac
 BAG_DIR="${BAG_DIR:-$HOME/bags}"
+BAG_DIR="${BAG_DIR%/}"; BAG_DIR="${BAG_DIR:-/}"
 LIDAR_TOPICS="${LIDAR_TOPICS:-/unilidar/cloud /unilidar/imu}"
 CAMERA_TOPICS="${CAMERA_TOPICS:-}"
 EXTRA_TOPICS="${EXTRA_TOPICS:-}"

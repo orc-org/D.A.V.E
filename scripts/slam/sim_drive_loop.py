@@ -17,6 +17,7 @@ import argparse
 import math
 
 import rclpy
+from rclpy.signals import SignalHandlerOptions
 from geometry_msgs.msg import Twist
 from rclpy.node import Node
 from rosgraph_msgs.msg import Clock
@@ -60,7 +61,8 @@ def main():
     p.add_argument('--turn-rate', type=float, default=0.5, help='rad/s')
     p.add_argument('--legs', type=int, default=4)
     a, ros_args = p.parse_known_args()
-    rclpy.init(args=ros_args)
+    # Handle Ctrl-C ourselves so the context is still valid when the final stop command is published
+    rclpy.init(args=ros_args, signal_handler_options=SignalHandlerOptions.NO)
     node = LoopDriver(a)
     try:
         while rclpy.ok() and not node.finished:
@@ -70,7 +72,7 @@ def main():
     node.pub.publish(Twist())
     print('loop finished' if node.finished else 'interrupted')
     node.destroy_node()
-    rclpy.shutdown()
+    rclpy.try_shutdown()
 
 
 if __name__ == '__main__':
