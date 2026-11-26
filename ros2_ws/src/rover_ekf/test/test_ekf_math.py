@@ -79,3 +79,39 @@ def test_load_wheel_radius_from_config_matches_physical_params(monkeypatch):
         lambda _pkg: '/nonexistent/rover_description_share',
     )
     assert math.isclose(load_wheel_radius_from_config(default=0.12), 0.12)
+
+
+def test_compute_wheel_forward_omega_ignores_non_wheel_joints():
+    names = [
+        'front_left_wheel_joint', 'rear_left_wheel_joint',
+        'front_right_wheel_joint', 'rear_right_wheel_joint',
+        'left_finger_joint', 'right_finger_joint',
+    ]
+    assert math.isclose(compute_wheel_forward_omega(names, [4.0, 4.0, 6.0, 6.0, 0.0, 0.0]), 5.0)
+
+
+def test_compute_wheel_forward_omega_rejects_standalone_arm_joints():
+    assert compute_wheel_forward_omega(
+        ['arm_joint', 'left_finger_joint', 'right_finger_joint'],
+        [0.0, 0.0, 0.0],
+    ) is None
+
+
+def test_joseph_update_handles_singular_innovation_nonfinite_and_wrapping():
+    x = np.array([0.0, 0.0, 3.1, 0.0, 0.0])
+    P = np.diag([1.0, 1.0, 0.2, 0.5, 0.1])
+    H = np.array([[0.0, 0.0, 1.0, 0.0, 0.0]])
+
+    # Singular innovation covariance S = 0 -> no crash, state preserved
+    x_sing, P_sing = joseph_update(x, np.zeros((5, 5)), H, np.array([0.5]), np.array([[0.0]]), wrap_angle_idx=2)
+    assert np.allclose(x_sing, x)
+    assert np.allclose(P_sing, np.zeros((5, 5)))
+
+    # Non-finite innovation -> no crash, state preserved
+    x_nan, P_nan = joseph_update(x, P, H, np.array([float('nan')]), np.array([[0.01]]), wrap_angle_idx=2)
+    assert np.allclose(x_nan, x)
+    assert np.allclose(P_nan, P)
+
+    # Out-of-range theta after update wraps to [-pi, pi]
+    x_wrap, _ = joseph_update(x, P, H, np.array([0.5]), np.array([[0.01]]), wrap_angle_idx=2)
+    assert -math.pi <= x_wrap[2] <= math.pi

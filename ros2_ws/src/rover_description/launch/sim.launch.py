@@ -1,5 +1,7 @@
+import math
 import os
 import xacro
+import yaml
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
@@ -10,9 +12,29 @@ from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue
 
 
+def _load_drive_dimensions(pkg_dir: str):
+    wheel_radius = 0.15
+    wheel_separation = 0.60
+    params_path = os.path.join(pkg_dir, 'config', 'physical_params.yaml')
+    try:
+        with open(params_path, 'r', encoding='utf-8') as f:
+            data = yaml.safe_load(f) or {}
+        dims = data.get('robot_dimensions') or {}
+        wr = float(dims.get('wheel_radius', wheel_radius))
+        wy = float(dims.get('wheel_y_offset', 0.5 * wheel_separation))
+        if math.isfinite(wr) and wr > 0.0:
+            wheel_radius = wr
+        if math.isfinite(wy) and wy > 0.0:
+            wheel_separation = 2.0 * wy
+    except Exception:
+        pass
+    return wheel_radius, wheel_separation
+
+
 def generate_launch_description():
     pkg_rover_description = get_package_share_directory('rover_description')
     pkg_ros_gz_sim = get_package_share_directory('ros_gz_sim')
+    wheel_radius, wheel_separation = _load_drive_dimensions(pkg_rover_description)
 
     # launch configurations
     use_rviz = LaunchConfiguration('use_rviz')
@@ -152,8 +174,8 @@ def generate_launch_description():
         output='screen',
         parameters=[{
             'use_sim_time': use_sim_time,
-            'wheel_radius': 0.15,
-            'wheel_separation': 0.60,
+            'wheel_radius': wheel_radius,
+            'wheel_separation': wheel_separation,
             'datum_latitude': 51.46,
             'datum_longitude': -112.70,
         }],
@@ -167,7 +189,7 @@ def generate_launch_description():
         output='screen',
         parameters=[{
             'use_sim_time': use_sim_time,
-            'wheel_radius': 0.15,
+            'wheel_radius': wheel_radius,
             'imu_yaw_offset_deg': 0.0,
             'datum_latitude': 51.46,
             'datum_longitude': -112.70,

@@ -3,6 +3,7 @@ import math
 import os
 import numpy as np
 import rclpy
+from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 from sensor_msgs.msg import Imu, NavSatFix, JointState
 from geometry_msgs.msg import Vector3, Twist, TransformStamped
@@ -58,8 +59,13 @@ def wgs84_enu_offset(lat_deg: float, lon_deg: float, lat0_deg: float, lon0_deg: 
 
 def joseph_update(x: np.ndarray, P: np.ndarray, H: np.ndarray, y: np.ndarray, R: np.ndarray, wrap_angle_idx=None):
     """Apply EKF update using the symmetric Joseph covariance form to preserve PSD guarantees."""
+    if not np.all(np.isfinite(y)):
+        return x.copy(), P.copy()
     S = H @ P @ H.T + R
-    K = P @ H.T @ np.linalg.inv(S)
+    try:
+        K = np.linalg.solve(S, H @ P).T
+    except np.linalg.LinAlgError:
+        return x.copy(), P.copy()
     x_new = x + K @ y
     if wrap_angle_idx is not None:
         x_new[wrap_angle_idx] = wrap_angle_rad(float(x_new[wrap_angle_idx]))
@@ -97,12 +103,17 @@ def predict_unicycle_state(x: np.ndarray, P: np.ndarray, Q: np.ndarray, dt: floa
 def compute_wheel_forward_omega(names, velocities):
     """Compute balanced forward wheel angular speed (rad/s), requiring both L and R sides when named."""
     if names and len(names) == len(velocities):
+        has_wheel_names = any('wheel' in n.lower() for n in names)
         left_vals = []
         right_vals = []
         for name, val in zip(names, velocities):
             if not math.isfinite(val):
                 continue
             lname = name.lower()
+            if 'finger' in lname or 'gripper' in lname or 'arm' in lname:
+                continue
+            if has_wheel_names and 'wheel' not in lname:
+                continue
             if 'left' in lname:
                 left_vals.append(float(val))
             elif 'right' in lname:
@@ -177,18 +188,30 @@ class RoverEKFNode(Node):
         default_wheel_radius = load_wheel_radius_from_config(default=0.15, logger=self.get_logger())
         self.declare_parameter('wheel_radius', default_wheel_radius)
         self.wheel_radius = float(self.get_parameter('wheel_radius').value)
+        if not math.isfinite(self.wheel_radius) or self.wheel_radius <= 0.0:
+            raise ValueError(f'wheel_radius must be finite and > 0.0, got {self.wheel_radius}')
         # /cmd_vel is a command, not a measurement, and was fused in addition to /motor/* (double counting)
         self.declare_parameter('fuse_cmd_vel', False)
         # Local frame origin. NaN = the first GPS fix. Set it to NAVnode's home waypoint so both share a frame.
         self.declare_parameter('datum_latitude', float('nan'))
         self.declare_parameter('datum_longitude', float('nan'))
-        self.imu_yaw_offset = math.radians(float(self.get_parameter('imu_yaw_offset_deg').value))
+        imu_yaw_offset_deg = float(self.get_parameter('imu_yaw_offset_deg').value)
+        if not math.isfinite(imu_yaw_offset_deg):
+            self.get_logger().warn(f'Invalid imu_yaw_offset_deg={imu_yaw_offset_deg}; defaulting to 90.0 deg')
+            imu_yaw_offset_deg = 90.0
+        self.imu_yaw_offset = math.radians(imu_yaw_offset_deg)
         self.speed_per_command = float(self.get_parameter('speed_per_motor_command').value)
+        if not math.isfinite(self.speed_per_command) or self.speed_per_command < 0.0:
+            self.get_logger().warn(f'Invalid speed_per_motor_command={self.speed_per_command}; defaulting to 1.0')
+            self.speed_per_command = 1.0
         self.fuse_cmd_vel = bool(self.get_parameter('fuse_cmd_vel').value)
         datum_lat = float(self.get_parameter('datum_latitude').value)
         datum_lon = float(self.get_parameter('datum_longitude').value)
 
         self.freq = float(self.get_parameter('frequency').value)
+        if not math.isfinite(self.freq) or self.freq <= 0.0:
+            self.get_logger().warn(f'Invalid frequency={self.freq}; defaulting to 20.0 Hz')
+            self.freq = 20.0
         self.dt = 1.0 / max(self.freq, 1.0)
         self.topic_imu_euler = str(self.get_parameter('topic_imu_euler').value)
         self.topic_imu_raw = str(self.get_parameter('topic_imu_raw').value)
@@ -322,7 +345,7 @@ class RoverEKFNode(Node):
             return
         H = np.array([[0.0, 0.0, 0.0, 0.0, 1.0]])
         y = np.array([float(omega_z)]) - H @ self.x
-        self.x, self.P = joseph_update(self.x, self.P, H, y, self.R_imu[1:2, 1:2])
+        self.x, self.P = joseph_update(self.x, self.P, H, y, self.R_imu[1:2, 1:2], wrap_angle_idx=2)
 
     def cmd_vel_callback(self, msg: Twist):
         """Measurement update from linear velocity command or wheel odometry."""
@@ -337,7 +360,7 @@ class RoverEKFNode(Node):
             R = self.R_wheel
         H = np.array([[0.0, 0.0, 0.0, 1.0, 0.0]])
         y = np.array([float(v_wheel)]) - H @ self.x
-        self.x, self.P = joseph_update(self.x, self.P, H, y, R)
+        self.x, self.P = joseph_update(self.x, self.P, H, y, R, wrap_angle_idx=2)
 
     def gps_fix_callback(self, msg: NavSatFix):
         """Measurement update for absolute GPS Position."""
@@ -368,7 +391,7 @@ class RoverEKFNode(Node):
             var_e, var_n = msg.position_covariance[0], msg.position_covariance[4]
             if var_e > 0.0 and var_n > 0.0 and np.isfinite(var_e) and np.isfinite(var_n):
                 R = np.diag([var_e, var_n])
-        self.x, self.P = joseph_update(self.x, self.P, H, y, R)
+        self.x, self.P = joseph_update(self.x, self.P, H, y, R, wrap_angle_idx=2)
 
     def timer_ekf_loop(self):
         """EKF Prediction Step, synchronous wheel measurement update, and state publication."""
@@ -454,12 +477,11 @@ def main(args=None):
     node = RoverEKFNode()
     try:
         rclpy.spin(node)
-    except KeyboardInterrupt:
-        node.get_logger().info("Rover EKF Node stopped cleanly.")
+    except (KeyboardInterrupt, ExternalShutdownException):
+        pass
     finally:
         node.destroy_node()
-        if rclpy.ok():
-            rclpy.shutdown()
+        rclpy.try_shutdown()
 
 
 if __name__ == '__main__':
