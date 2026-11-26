@@ -45,7 +45,11 @@ ament_target_dependencies(vesc_can_driver_node
 install(DIRECTORY include/
   DESTINATION include
 )
-target_link_libraries(vesc_can_driver_node yaml-cpp)
+if(TARGET yaml-cpp::yaml-cpp)
+  target_link_libraries(vesc_can_driver_node yaml-cpp::yaml-cpp)
+else()
+  target_link_libraries(vesc_can_driver_node yaml-cpp)
+endif()
 
 install(TARGETS
   drive_node

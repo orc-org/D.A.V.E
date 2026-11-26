@@ -106,3 +106,58 @@ TEST(DriveMathTest, VescCanCommandHandlesBrakeClampAndErpmConversion)
         400.0, 15000.0, 40.0, 0.9, 5.0, true);
     EXPECT_EQ(nan_cmd.comm_id, 2);
 }
+
+TEST(DriveMathTest, JoystickAppliesSteeringDeadzoneWhileDriving)
+{
+    // R2 half-pressed (-0.0 -> 0.5 throttle), small steering inside 0.05 deadzone -> straight
+    auto straight = drive_package::mixJoystickCommand(1.0f, 0.0f, 0.03f, 1.0f, 0.05f, true);
+    EXPECT_FLOAT_EQ(straight.left, straight.right);
+    EXPECT_NEAR(straight.left, 0.5f, 1e-5f);
+}
+
+TEST(DriveMathTest, VescCurrentAndDutyModesHonorBrakeOnZeroAndClamp)
+{
+    // Near-zero current/duty commands brake when brake_on_zero=true, coast when false
+    auto cur_brk = drive_package::computeVescCanCommand(
+        "current", 0.005f, false, false, 0.15, 2, 50.0, 100.0, 7000.0, 14.0, 0.95, 5.0, true);
+    EXPECT_EQ(cur_brk.comm_id, 2);
+    EXPECT_EQ(cur_brk.value, 5000);
+
+    auto cur_coast = drive_package::computeVescCanCommand(
+        "current", 0.0f, false, false, 0.15, 2, 50.0, 100.0, 7000.0, 14.0, 0.95, 5.0, false);
+    EXPECT_EQ(cur_coast.comm_id, 1);
+    EXPECT_EQ(cur_coast.value, 0);
+
+    auto duty_coast = drive_package::computeVescCanCommand(
+        "duty", 0.0f, false, false, 0.15, 2, 50.0, 100.0, 7000.0, 14.0, 0.95, 5.0, false);
+    EXPECT_EQ(duty_coast.comm_id, 0);
+    EXPECT_EQ(duty_coast.value, 0);
+
+    // Commands beyond [-1, 1] are clamped to [-1, 1] before scaling max_current / max_duty
+    auto cur_clamped = drive_package::computeVescCanCommand(
+        "current", 2.5f, false, false, 0.15, 2, 50.0, 100.0, 7000.0, 14.0, 0.95, 5.0, true);
+    EXPECT_EQ(cur_clamped.comm_id, 1);
+    EXPECT_EQ(cur_clamped.value, 14000);
+
+    auto duty_clamped = drive_package::computeVescCanCommand(
+        "duty", -2.5f, false, false, 0.15, 2, 50.0, 100.0, 7000.0, 14.0, 0.95, 5.0, true);
+    EXPECT_EQ(duty_clamped.comm_id, 0);
+    EXPECT_EQ(duty_clamped.value, -95000);
+
+    // NaN max_erpm / max_current / max_duty falls back cleanly without UB/overflow
+    const double nan_d = std::numeric_limits<double>::quiet_NaN();
+    auto nan_max_erpm = drive_package::computeVescCanCommand(
+        "erpm", 0.5f, false, true, 0.15, 2, 50.0, 100.0, nan_d, 14.0, 0.95, 5.0, true);
+    EXPECT_EQ(nan_max_erpm.comm_id, 2);
+    EXPECT_EQ(nan_max_erpm.value, 5000);
+
+    auto nan_max_cur = drive_package::computeVescCanCommand(
+        "current", 0.5f, false, false, 0.15, 2, 50.0, 100.0, 7000.0, nan_d, 0.95, 5.0, true);
+    EXPECT_EQ(nan_max_cur.comm_id, 1);
+    EXPECT_EQ(nan_max_cur.value, 0);
+
+    auto nan_max_duty = drive_package::computeVescCanCommand(
+        "duty", 0.5f, false, false, 0.15, 2, 50.0, 100.0, 7000.0, 14.0, nan_d, 5.0, true);
+    EXPECT_EQ(nan_max_duty.comm_id, 0);
+    EXPECT_EQ(nan_max_duty.value, 0);
+}
