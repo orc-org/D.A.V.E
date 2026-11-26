@@ -3,6 +3,7 @@
 #include <cstdio>
 #include <string>
 #include "nav_nmea.hpp"
+#include "nav_detour.hpp"
 #include "Obstacle.hpp"
 #include "Waypoint.hpp"
 
@@ -71,4 +72,33 @@ TEST(NavNmeaTest, ResetHomeRebasesLocalCoordinatesCleanly)
     obs.rebaseToHome();
     EXPECT_NEAR(obs.getX(), 0.0, 0.1);
     EXPECT_NEAR(obs.getY(), 0.0, 0.1);
+}
+
+TEST(NavDetourTest, CandidatesAreMeasuredFromTheObstacleCentre)
+{
+    // Obstacle r = 2 m at (10, 0); the track runs along y = 1.5, so the point of interest is (10, 1.5),
+    // 1.5 m from the centre. Anchoring on the point of interest put the far-side "1 m past the apex"
+    // waypoint 3 - 1.5 = 1.5 m from the centre, i.e. inside the obstacle.
+    const double cx = 10.0, cy = 0.0, r = 2.0;
+    const auto u = nav_detour::detourDirection(cx, cy, 10.0, 1.5, 1.0, 0.0);
+    EXPECT_NEAR(u[0], 0.0, 1e-12);
+    EXPECT_NEAR(u[1], -1.0, 1e-12);
+
+    const auto nearSide = nav_detour::detourPoint(cx, cy, u, r + 1.0, -1);
+    const auto farSide = nav_detour::detourPoint(cx, cy, u, r + 1.0, +1);
+    EXPECT_NEAR(std::hypot(nearSide[0] - cx, nearSide[1] - cy), r + 1.0, 1e-12);
+    EXPECT_NEAR(std::hypot(farSide[0] - cx, farSide[1] - cy), r + 1.0, 1e-12);
+    EXPECT_GT(nearSide[1], cy);  // near side is the side the track passes on
+    EXPECT_LT(farSide[1], cy);
+}
+
+TEST(NavDetourTest, TrackThroughTheCentreUsesTheTrackNormal)
+{
+    // POI coincides with the centre: the old code returned without adding any detour
+    const auto u = nav_detour::detourDirection(5.0, 5.0, 5.0, 5.0, 3.0, 0.0);
+    EXPECT_NEAR(u[0], 0.0, 1e-12);
+    EXPECT_NEAR(u[1], 1.0, 1e-12);
+    const auto none = nav_detour::detourDirection(5.0, 5.0, 5.0, 5.0, 0.0, 0.0);
+    EXPECT_EQ(none[0], 0.0);
+    EXPECT_EQ(none[1], 0.0);
 }
