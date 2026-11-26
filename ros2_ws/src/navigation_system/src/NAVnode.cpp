@@ -1,5 +1,6 @@
 #include "NAVnode.hpp"
 #include "nav_nmea.hpp"
+#include "nav_detour.hpp"
 #include <algorithm>
 
 using std::placeholders::_1;
@@ -265,6 +266,7 @@ void NAVnode::trackCollisionDetected(ListNode* nextNode, Obstacle* obstacle){
     switch (circumnavigationStyle){
         case(reroute): generateDetour(pointOfInterest[0], pointOfInterest[1], nextNode, obstacle); break;
         case(trackCrawling): {
+            ListNode* segmentStart = nextNode->previous;
             // to start, the process is identical to when a waypoint collision is detected, but it's even simpler since we know that there isn't a turn or a bend
             // in the route midway through the obstacle
                 
@@ -323,84 +325,89 @@ void NAVnode::trackCollisionDetected(ListNode* nextNode, Obstacle* obstacle){
             else{
                 routes[routeToEdit].addBefore(newWaypoint, nextNode);
             }
+
+            // The waypoints above stop short of the obstacle on either side, but the segment between them
+            // still crosses it. Reroute that segment (and any other new one) as the description promises.
+            for (ListNode* a = segmentStart; a != nullptr && a != nextNode && a->next != nullptr; a = a->next) {
+                checkTrackCollisions(a, a->next, obstacle);
+            }
         }; break;
         case(automatic_Circumnavigation_Off): cout << "collision Detected with Obstacle (" << obstacle->getX() << ", " << obstacle->getY() << ")" << endl; break;
     };
 }
 
 void NAVnode::generateDetour(double pointOfInterest_X, double pointOfInterest_Y, ListNode* nextNode, Obstacle* obstacle){
-        
-    // define unit vector going from POI to centre
-    double dx = obstacle->getX() - pointOfInterest_X;
-    double dy = obstacle->getY() - pointOfInterest_Y;
-    double length = std::sqrt(dx * dx + dy * dy);
-    if (length < 1e-9) {
-    return;
+    if (nextNode == nullptr || nextNode->previous == nullptr || obstacle == nullptr) {
+        return;
     }
-    double* unitVector = new double[2]{dx / length, dy / length}; // only has two places at index 0 and 1
+    // each detour re-checks the two segments it creates, so bound the recursion
+    if (detourDepth >= kMaxDetourDepth) {
+        cout << "detour recursion limit reached near obstacle (" << obstacle->getX() << ", " << obstacle->getY()
+             << "); route left as is" << endl;
+        return;
+    }
+    struct DepthGuard { int& d; explicit DepthGuard(int& v) : d(v) { ++d; } ~DepthGuard() { --d; } } depthGuard(detourDepth);
+
+    // unit vector from the POI towards the centre (the track's normal if the track passes through the centre)
+    const std::array<double, 2> unitVector = nav_detour::detourDirection(
+        obstacle->getX(), obstacle->getY(), pointOfInterest_X, pointOfInterest_Y,
+        nextNode->point->getX() - nextNode->previous->point->getX(),
+        nextNode->point->getY() - nextNode->previous->point->getY());
+    if (unitVector[0] == 0.0 && unitVector[1] == 0.0) {
+        return;
+    }
+    // candidates are measured from the obstacle CENTRE, so they sit exactly that far from it
+    auto candidate = [&](double distance, int side) {
+        const auto p = nav_detour::detourPoint(obstacle->getX(), obstacle->getY(), unitVector, distance, side);
+        return new ListNode(nullptr, nullptr, new Waypoint(p[0], p[1]));
+    };
+    // insert before nextNode, then re-check the segments into and out of the new waypoint
+    auto insertAndRecheck = [&](ListNode* waypoint) {
+        routes[routeToEdit].addBefore(waypoint, nextNode);
+        checkTrackCollisions(waypoint->previous, waypoint, obstacle);
+        checkTrackCollisions(waypoint, nextNode, obstacle);
+    };
+    double dx, dy;
 
     // following obstacles are used in the worst case scenario of chaining obstacles
     int obstacle1_index;
     int obstacle2_index;
-    
+
     // try to put new waypoint 1m past the nearest apex
-    ListNode* newWaypoint = new ListNode(nullptr, nullptr, 
-                 new Waypoint(pointOfInterest_X - (obstacle->getRadius() + 1) * unitVector[0], pointOfInterest_Y - (obstacle->getRadius() + 1) * unitVector[1]));
-        
+    ListNode* newWaypoint = candidate(obstacle->getRadius() + 1, -1);
+
     if (!isWaypointColliding(newWaypoint)){
         // putting it 1m past the nearest apex works fine
-        routes[routeToEdit].addBefore(newWaypoint, nextNode);
-        // check if the new waypoint created other track collisions. 
-        // Next two lines will recursively check for problems and fix them until there are no more collisions resulting from our rerouting
-        checkTrackCollisions(nextNode->previous, newWaypoint, obstacle);
-        checkTrackCollisions(newWaypoint, nextNode, obstacle);
+        insertAndRecheck(newWaypoint);
     }
     else {
         // try to put the new waypoint at the nearest apex
         obstacle1_index = findWaypointCollision(newWaypoint->point);
         delete newWaypoint;
-        newWaypoint = new ListNode(nullptr, nullptr, 
-                new Waypoint(pointOfInterest_X - (obstacle->getRadius()) * unitVector[0], pointOfInterest_Y - (obstacle->getRadius()) * unitVector[1]));
-        
+        newWaypoint = candidate(obstacle->getRadius(), -1);
+
         if (!isWaypointColliding(newWaypoint)){
             // putting it at the nearest apex works fine
-            routes[routeToEdit].addBefore(newWaypoint, nextNode);
-                
-            // check if the new waypoint created other track collisions. 
-            // Next two lines will recursively check for problems and fix them until there are no more collisions resulting from our rerouting
-            checkTrackCollisions(nextNode->previous, newWaypoint, obstacle);
-            checkTrackCollisions(newWaypoint, nextNode, obstacle);
+            insertAndRecheck(newWaypoint);
         }
         else {
             // try putting it 1m past the far apex
             delete newWaypoint;
-            newWaypoint = new ListNode(nullptr, nullptr, 
-                new Waypoint(pointOfInterest_X + (obstacle->getRadius() + 1) * unitVector[0], pointOfInterest_Y + (obstacle->getRadius() + 1) * unitVector[1]));
-                
+            newWaypoint = candidate(obstacle->getRadius() + 1, +1);
+
             if (!isWaypointColliding(newWaypoint)){
                 // putting it 1m past the far apex works fine
-                routes[routeToEdit].addBefore(newWaypoint, nextNode);
-                    
-                // check if the new waypoint created other track collisions. 
-                // Next two lines will recursively check for problems and fix them until there are no more collisions resulting from our rerouting
-                checkTrackCollisions(nextNode->previous, newWaypoint, obstacle);
-                checkTrackCollisions(newWaypoint, nextNode, obstacle);
+                insertAndRecheck(newWaypoint);
             }
             else {
                 // try putting it at the far apex
                 obstacle2_index = findWaypointCollision(newWaypoint->point);
                 delete newWaypoint;
-                newWaypoint = new ListNode(nullptr, nullptr, 
-                    new Waypoint(pointOfInterest_X + (obstacle->getRadius()) * unitVector[0], pointOfInterest_Y + (obstacle->getRadius()) * unitVector[1]));
-            
+                newWaypoint = candidate(obstacle->getRadius(), +1);
+
                 if (!isWaypointColliding(newWaypoint)){
                     // putting it at the far apex works fine
-                    routes[routeToEdit].addBefore(newWaypoint, nextNode);
-                    
-                    // check if the new waypoint created other track collisions. 
-                    // Next two lines will recursively check for problems and fix them until there are no more collisions resulting from our rerouting
-                    checkTrackCollisions(nextNode->previous, newWaypoint, obstacle);
-                    checkTrackCollisions(newWaypoint, nextNode, obstacle);
+                    insertAndRecheck(newWaypoint);
                 }
                 else {
                     /*
@@ -415,7 +422,6 @@ void NAVnode::generateDetour(double pointOfInterest_X, double pointOfInterest_Y,
                         obstacle1_index < 0 ||
                         obstacle2_index < 0) {
                         delete newWaypoint;
-                        delete[] unitVector;
                         return;
                     }
 
@@ -425,7 +431,6 @@ void NAVnode::generateDetour(double pointOfInterest_X, double pointOfInterest_Y,
                     if (alternative1 == nullptr || alternative2 == nullptr) {
                         delete alternative1;
                         delete alternative2;
-                        delete[] unitVector;
                         return;
                     }
                         
@@ -448,18 +453,12 @@ void NAVnode::generateDetour(double pointOfInterest_X, double pointOfInterest_Y,
                         newWaypoint = new ListNode(nullptr, nullptr, alternative2);
                         delete alternative1;
                     }
-                    routes[routeToEdit].addBefore(newWaypoint, nextNode);
-                        
-                    // check if the new waypoint created other track collisions. 
-                    // Next two lines will recursively check for problems and fix them until there are no more collisions resulting from our rerouting
-                    checkTrackCollisions(nextNode->previous, newWaypoint, obstacle);
-                    checkTrackCollisions(newWaypoint, nextNode, obstacle);
+                    insertAndRecheck(newWaypoint);
                 }
             }
         }
 
     }
-    delete[] unitVector;
 }
 
 Waypoint* NAVnode::findAlternateRoute(int first, int second, int depth){

@@ -314,6 +314,8 @@ private:
         Check the design guild for my drawings further discussing this
     */
     void generateDetour(double pointOfInterest_X, double pointOfInterest_Y, ListNode* nextNode, Obstacle* obstacle);
+    int detourDepth = 0;                       // current generateDetour recursion depth
+    static constexpr int kMaxDetourDepth = 16; // bound on detour re-checks
 
     Waypoint* findAlternateRoute(int first, int second, int depth = 0);
 
