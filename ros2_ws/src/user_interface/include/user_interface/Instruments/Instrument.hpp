@@ -27,6 +27,18 @@ public:
     Instrument() = default;
     ~Instrument() = default;
 
+    inline bool isClicked(Vector2 mousePosition)
+    {
+        if (mousePosition.x >= _position.x && 
+            mousePosition.x <= _position.x + _size.x && 
+            mousePosition.y >= _position.y && 
+            mousePosition.y <= _position.y + _size.y)
+            return true;
+        else
+            return false;
+        
+    }
+
     virtual void Init(Vector2 position, Vector2 size) = 0;
 
     virtual void Draw() const = 0;

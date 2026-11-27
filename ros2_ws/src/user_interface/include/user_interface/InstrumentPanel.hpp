@@ -26,9 +26,9 @@ private:
     vector<Instrument*> _instruments;
     InstrumentPanelState _state;
 
-    void addInstrument();
+    void addInstrument(Instrument* instrument);
 
-    void removeInstrument();
+    void removeInstrument(Vector2 mousePosition);
 
     void loadLayout();
 
