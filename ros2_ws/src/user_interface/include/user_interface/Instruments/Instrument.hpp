@@ -9,7 +9,7 @@ using std::string;
 /*
     Instrument
     --------------
-    Parent object for each instrument for our User interface
+    Abstract Parent object for each instrument for our User interface
 */
 class Instrument
 {
@@ -24,11 +24,12 @@ protected:
     RenderTexture2D _canvas;
 
 public:
-    Instrument();
+    Instrument() = default;
+    ~Instrument() = default;
 
-    virtual void Init(Vector2 position, Vector2 size);
+    virtual void Init(Vector2 position, Vector2 size) = 0;
 
-    virtual void Draw() const;
+    virtual void Draw() const = 0;
 
-    virtual void Update(float dt);
+    virtual void Update(float dt) = 0;
 };

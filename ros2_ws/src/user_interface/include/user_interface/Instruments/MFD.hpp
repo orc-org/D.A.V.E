@@ -1,7 +1,8 @@
 #pragma once
 
 #include "SimpleMFD.hpp"
-#include "AdvancedDisplay.hpp"
+
+class AdvancedDisplay;
 
 /*
     MFD

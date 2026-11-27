@@ -1,7 +1,14 @@
 #pragma once
 
+// #define RAYGUI_IMPLEMENTATION
+// #include "raygui.h"
+#include <iostream>
+#include <raylib.h>
+
 #include "rclcpp/rclcpp.hpp"
-#include "Layout.hpp"
+#include "ResourceManager.hpp"
+#include "InstrumentPanel.hpp"
+#include "UIConfig.hpp"
 
 /*
 	LaunchNode

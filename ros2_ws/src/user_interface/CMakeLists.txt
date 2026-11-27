@@ -34,13 +34,23 @@ endif()
 # )
 # FetchContent_MakeAvailable(raygui)
 
-add_executable(LaunchNode src/LaunchNode.cpp)
+add_executable(LaunchNode
+  src/LaunchNode.cpp
+  src/InstrumentPanel.cpp
+  src/ResourceManager.cpp
+)
 target_include_directories(LaunchNode PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
   $<INSTALL_INTERFACE:include>
   ${raygui_SOURCE_DIR})
 target_compile_features(LaunchNode PUBLIC c_std_99 cxx_std_17)  # Require C99 and C++17
 ament_target_dependencies(LaunchNode rclcpp)
+target_link_libraries(LaunchNode raylib)
+
+install(TARGETS LaunchNode
+  DESTINATION lib/${PROJECT_NAME}
+)
+
 ament_export_include_directories(include)
 ament_export_dependencies(rclcpp)
 
